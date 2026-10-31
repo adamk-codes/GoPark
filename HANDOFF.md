@@ -1,7 +1,7 @@
 # Handoff — current status
 
 > **Read this first** if you're a new Claude Code / Cursor session picking up the work.
-> Last updated: 2026-10-31, during phase 1 continuation (ops work in progress).
+> Last updated: 2026-11-01. **Phase 1 is merged on `main`**; phase 2 is next.
 > Repo: https://github.com/adamk-codes/GoPark · default branch `main`
 
 ## 1. What this project is (30 seconds)
@@ -17,60 +17,57 @@ Source-of-truth docs:
 - `docs/briefs/`: one brief per workstream, with phase checklists.
 - `README.md`: run commands.
 
+**Decision taken:** detection is **camera-first** (old phones as entrance plate camera + overhead spot camera), with the phone's background signals as backup. NFC/QR are optional fallbacks. The rotating gate-QR screen is optional, not required.
+
 ## 2. Done (on `main`)
-| Commit | What |
-|---|---|
-| `8b6b03a` | **Phase 0:** contract + schemas + TS types, config (lots, holidays, fusion, rhythm), generator v0 (3 personas), Rhythm baseline B2, FastAPI ops + rhythm endpoints (scan/check-in/out, overview with predictions, alerts on the fly, audit, signals, basic sync, demo clock), React dashboard (live lots, pattern table), Expo attendant skeleton, 10 contract tests |
-| `c1ec1ce` | `docs/briefs/`: shared rules, kickoff prompt, briefs P1–P4 + H |
-| *(this file)* | `HANDOFF.md` |
+| Area | State | Verified |
+|---|---|---|
+| Contract | P0 + ops P1 additions: booking QR, walk-ins, alerts with ids/resolve, stay evidence (with `direction`), gate code, QR public key | Type copies in dashboard + mobile in sync |
+| Ops API (`api/ops/`) | Scan by QR / booking ID / plate, walk-ins, check-out, Ed25519-signed booking QR, gate code, persisted alerts (30 s scheduler: overstay + fee, unconfirmed departure, no-show, upcoming), sync push/pull with cursor + conflicts, **evidence fusion** (`fusion.py`: signals → ARRIVING / CHECKED_IN / CHECKED_OUT, saved evidence), demo clock | Tests |
+| Rhythm (`rhythm/`) | Stages `clean`, `activity`, `discover`, `habit`, `predict`; several routines per user; `python -m rhythm evaluate` vs baselines B1/B2/B3 | Hit@1 **0.707** vs B2 0.684, B1 0.565, B3 0.518 (test weeks) |
+| Generator (`tools/generator/`) | 12 personas incl. switcher, fader, noisy, canceller, multi-routine, coincidence trap, new, lapsed; 2 hidden (gitignored, `--include-hidden`); capacity; `--messy`; driver traces (clean, weak GPS, underground, phone dead, contradiction, no-show) with camera signals | Tests |
+| Dashboard (`dashboard/`) | Design tokens (light/dark), ECharts; pages: Live lots (+ forecast vs actual), Detection log, Booking patterns (filters, sort, export), User drill-down (heatmap, timeline) | Builds |
+| Mobile (`apps/mobile/`) | Expo Router: Overview, Scan (camera QR + manual), Alerts, History, Driver, Settings; mocks fall back only when an endpoint returns 404/405/501 | Typecheck + Android export; **never run on a device** |
 
-Follow-up session on branch `feat/ops-p1-continuation` from `e74b6bd`:
-- Contract-first endpoint schemas/types and implementation for signed booking QR, gate QR, walk-ins, persistent alerts, alert resolution, evidence timelines, sync cursors and offline event handling.
-- Configured signal fusion creates ARRIVING / CHECKED_IN / CHECKED_OUT projections and persists signal evidence; alert scheduler also marks no-shows and infers silent departures.
-- Added ops regression tests. `uv run pytest` → 16 passed; dashboard production build and mobile typecheck pass.
-- Node install reports 11 moderate mobile dependency audit findings; not auto-upgraded. Changes are on the feature branch and still need pushing/review.
-- Hardware simulator, WebSocket, dashboard/mobile integration of the new endpoints, and remaining P1/P2 workstreams remain open.
+Checks at this point: `uv run pytest` → **54 passed**; `npm --prefix dashboard run build` ok; `apps/mobile` `npx tsc --noEmit` ok.
 
-Verified at P0: `uv run pytest` → 10 passed; dashboard builds; mobile type-checks (never run on a device).
+## 3. Known weaknesses (be honest in the demo)
+- **Rhythm exactness:** the engine predicts the next booking better than B2, but recovers exact day sets worse for several personas, e.g.:
+  - routine switcher: 0.59 vs 0.99;
+  - new user: 0.0 vs 0.9.
 
-## 3. In progress: phase 1 (hours 3–12 of each brief)
-Four Claude Code sessions, each in its own git worktree and **local** branch (not pushed). Each was told to commit on its branch, not push, not merge.
+  Cause: no drift stage yet, and the habit test is too strict for short histories. **Phase 2 must fix this.**
+- **Not built yet:** calibration, reminders and tiers are still simple (no calibration stage). Also missing: the simulator (`tools/simulator/`), WebSocket `/live`, driver confirm, rewards ledger.
+- **Mobile:** still uses its own `src/pending-contract.ts` types for endpoints that now exist. Switch to the real `contract.ts` types; e.g. the booking-QR response is `{qr}` only.
+- **Detection log (dashboard):** may still use mocked evidence. Point it at the real `GET /stays/{id}/evidence`.
+- **Old branches:** `claude/feat-ops-p1-0776d5` is a duplicate ops implementation, superseded by awazzan2's work on `main`. Keep it for reference only and **don't merge it**. `origin/feat/ops-p1-continuation` is already in `main`.
 
-| Workstream | Brief | Branch (local, name starts with) | Scope this phase |
-|---|---|---|---|
-| P2 Ops backend | `docs/briefs/P2-ops-backend.md` | `…feat-ops-p1…` | **Contract additions first** (`/bookings/{id}/qr`, `/walk_ins`, `/alerts/{id}/resolve`, `/stays/{id}/evidence`, `/dev/gate/{lot_id}`, `Alert` schema), Ed25519 QR signing, gate code, walk-ins, persisted alerts, sync cursor + anomalies |
-| P3 Rhythm | `docs/briefs/P3-rhythm.md` | `…feat-rhythm-p1…` | `rhythm/stages/` clean, activity, discover, habit; real `_patterns()`; `rhythm evaluate` vs B1/B2/B3 |
-| P4 Data + Dashboard | `docs/briefs/P4-data-dashboard.md` | `…feat-data-dash-p1…` | 8 more personas + 2 hidden (gitignored), capacity, `--messy`, driver traces; dashboard design pass, filters, drill-down |
-| P1 Mobile | `docs/briefs/P1-mobile.md` | `…feat-mobile-p1…` | Expo Router tabs, settings, camera QR scan, overview, history (mocks for P2's new endpoints) |
+## 4. Next: phase 2 (in priority order)
+1. **Rhythm:**
+   - `drift` stage (emerging/active/fading/ended + change date);
+   - relax the habit test for new users;
+   - `calibrate` (isotonic on validation weeks);
+   - `remind` (τ from precision target, tiers, timing from `created_at`);
+   - template reasons.
 
-Find the branches with `git branch --list "*feat-*"` (the app may add a prefix/suffix to names). Each session's worktree is listed by `git worktree list`.
+   Target: beat B2 on Hit@1 **and** day-set recovery. Brief: `docs/briefs/P3-rhythm.md` §P2.
+2. **Simulator** `tools/simulator/`: replay `data/traces/*.jsonl` into `POST /signals` on the demo clock, then tune `config/fusion.yaml`. Brief: P2 §P2.
+3. **Camera edge** `edge/camera/`: plate reader + spot watcher posting `camera_plate` / `camera_spot`. Brief: `docs/briefs/H-hardware.md`.
+4. **Mobile:**
+   - switch to the real contract types;
+   - offline cache + outbox (`expo-sqlite`);
+   - offline QR verification with `/keys/qr`.
 
-## 4. Next steps (in order)
-1. **Merge phase-1 branches into `main`**, in this order to limit conflicts: ops (contract changes) → rhythm → data-dash → mobile. For each:
-   ```bash
-   git merge --no-ff <branch>
-   ```
-   Then run `uv run pytest`, `npm --prefix dashboard run build` and `npm --prefix apps/mobile run typecheck`.
-   - Conflicts are most likely in `dashboard/src/contract.ts` / `apps/mobile/src/contract.ts` (regenerate with `npm run contract`) and `.gitignore`.
-2. If P2 changed the contract, refresh the copies (`npm --prefix dashboard run contract`, `npm --prefix apps/mobile run contract`) and replace the mobile/dashboard mocks with the real endpoints.
-3. Regenerate data with the new generator, re-run the engine and evaluation:
-   ```bash
-   uv run python -m tools.generator --users 300 --weeks 26 --seed 42
-   ```
-   ```bash
-   uv run python -m rhythm run
-   ```
-   ```bash
-   uv run python -m rhythm evaluate
-   ```
-   Then `POST /dev/reset` on the API.
-4. Push `main`, update this file (section 2 + 3).
-5. Start **phase P2** of each brief (fusion + simulator; offline outbox; drift/calibration/reminders; detection log + evaluation page). The kickoff prompt is in `docs/briefs/README.md`.
+   Brief: P1 §P2.
+5. **Dashboard:** real evidence on the Detection log; evaluation page from `metrics.json`. Brief: P4 §P2–P3.
+6. **Then phase 3:** driver confirm + rewards, `tools/demo.py` one-command demo, WebSocket `/live`.
+
+Parallel sessions: give each one its brief + the kickoff prompt in `docs/briefs/README.md`. Run them in separate worktrees; ports 8001–8004 / 5174 to avoid clashes.
 
 ## 5. Open decisions (ask the user)
-- **Detection hardware:** camera-first (recommended; old phones as cameras) vs hybrid kit (BLE beacons + NFC). The code accepts both through `POST /signals`.
-- **iPhone driver build:** needs a Mac or Apple developer account. Otherwise the driver demo is Android-only.
+- iPhone driver build: needs a Mac or Apple developer account; otherwise the driver demo is Android-only.
 - Presentation length / whether a live demo is required.
+- What GoPark's lots really look like (own vs partner lots, gates, payment at exit). This affects whether cameras can be installed everywhere.
 
 ## 6. How to resume (any tool)
 ```bash
@@ -80,10 +77,13 @@ git clone https://github.com/adamk-codes/GoPark.git
 uv sync
 ```
 ```bash
-uv run python -m tools.generator
+uv run python -m tools.generator --users 300 --weeks 26 --seed 42
 ```
 ```bash
 uv run python -m rhythm run
+```
+```bash
+uv run python -m rhythm evaluate
 ```
 ```bash
 uv run uvicorn api.main:app --reload --port 8000
@@ -94,7 +94,7 @@ npm --prefix dashboard install
 ```bash
 npm --prefix dashboard run dev
 ```
-Then read `docs/briefs/README.md` and the brief for the workstream you're continuing. Follow the shared rules there (contract-first, stay in your folders, tests before merge).
+Mobile: `npm --prefix apps/mobile install`, put `EXPO_PUBLIC_API_URL=http://<laptop-LAN-IP>:8000` in `apps/mobile/.env`, then `npm --prefix apps/mobile run start` and scan with Expo Go.
 
 ## 7. Housekeeping rule
 Before any session runs out of context it must update this file (done / in progress / next, with exact commands) and commit + push it. Never push code that breaks `main`; describe unfinished work here instead.
