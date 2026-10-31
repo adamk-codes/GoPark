@@ -75,7 +75,7 @@ def user_patterns(user_id: str, ub: pd.DataFrame, cutoff: date, cfg: dict, run_i
 
     location = recent["location_id"].mode().iat[0]
     at_loc = recent[recent["location_id"] == location]
-    hits = at_loc["start_time"].dt.weekday.value_counts()
+    hits = at_loc["start_time"].dt.day_of_week.value_counts()
     days_idx = sorted(int(d) for d, n in hits.items() if n / weeks_seen >= 0.5)
     if not days_idx:
         return {**base, "pattern_type": "occasional", "state": None, "days": [], "label": "Occasional",
@@ -84,7 +84,7 @@ def user_patterns(user_id: str, ub: pd.DataFrame, cutoff: date, cfg: dict, run_i
                 "reminder": {"recommend": False, "tier": "none", "at": None},
                 "reason": f"{len(recent)} bookings in {weeks_seen} weeks with no weekday repeated in most weeks."}
 
-    on_days = at_loc[at_loc["start_time"].dt.weekday.isin(days_idx)]
+    on_days = at_loc[at_loc["start_time"].dt.day_of_week.isin(days_idx)]
     minutes = on_days["start_time"].dt.hour * 60 + on_days["start_time"].dt.minute
     center, spread = float(minutes.median()), float(minutes.std() or 0)
     conf = round(min(0.99, len(on_days) / (weeks_seen * len(days_idx))), 3)

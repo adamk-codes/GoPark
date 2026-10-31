@@ -28,7 +28,7 @@ def slots(day_stats: pd.DataFrame, users: pd.DataFrame, cutoff: date, calendar: 
     for s, e in breaks:
         in_break |= (days >= s) & (days <= e)
     cal = pd.DataFrame({"day": pd.to_datetime(days), "holiday": np.isin(days, hol), "in_break": in_break})
-    cal["weekday"] = cal["day"].dt.weekday
+    cal["weekday"] = cal["day"].dt.day_of_week
     s = day_stats[["user_id", "location_id", "cluster", "weekday", "center_min", "post_mean", "is_habit"]] \
         .merge(cal, on="weekday")
     skips = s["user_id"].map(users.set_index("user_id")["skips_breaks"]).fillna(False).astype(bool)

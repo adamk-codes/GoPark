@@ -38,7 +38,7 @@ def activity(df: pd.DataFrame, cutoff: date, cfg: dict, calendar: dict | None = 
         all_days = np.unique(day[ix])
         booked = np.unique(day[ix[kept[ix]]])
         booked = booked if len(booked) else all_days   # cancelled-only users: use what they tried
-        span = np.arange(all_days[0], end + 1, dtype="datetime64[D]")
+        span = np.arange(all_days[0], end + np.timedelta64(1, "D"), dtype="datetime64[D]")
         gaps = np.diff(booked).astype(int)
         median_gap = float(np.median(gaps)) if len(gaps) else 0.0
         threshold = max(gap_min, gap_mult * median_gap)
@@ -68,6 +68,6 @@ def activity(df: pd.DataFrame, cutoff: date, cfg: dict, calendar: dict | None = 
 
     exposure = pd.DataFrame({"user_id": np.concatenate(exp_users) if exp_users else [],
                              "day": pd.to_datetime(np.concatenate(exp_days)) if exp_days else []})
-    exposure["weekday"] = exposure["day"].dt.weekday
+    exposure["weekday"] = exposure["day"].dt.day_of_week
     exposure["week"] = exposure["day"] - pd.to_timedelta(exposure["weekday"], unit="D")
     return exposure, pd.DataFrame(summary, columns=USER_COLS)

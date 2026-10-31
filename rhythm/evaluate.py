@@ -101,7 +101,7 @@ def predict_b3(df, cutoff, cfg, calendar, window_days, min_share: float = 0.5):
     hist = history(df, cutoff)
     hist = hist[normalise_status(hist["status"]).isin(["completed", "no_show"])]
     f = _frame(hist)
-    f["weekday"] = f["day"].dt.weekday
+    f["weekday"] = f["day"].dt.day_of_week
     f["week"] = f["day"] - pd.to_timedelta(f["weekday"], unit="D")
     first_week = f.groupby("user_id")["week"].min()
     weeks = ((pd.Timestamp(cutoff) - first_week).dt.days // 7 + 1).rename("weeks")
@@ -109,7 +109,7 @@ def predict_b3(df, cutoff, cfg, calendar, window_days, min_share: float = 0.5):
     g = g.join(weeks, on="user_id").reset_index()
     g["p"] = (g["n"] / g["weeks"]).clip(upper=1.0)
     days = pd.DataFrame({"day": pd.to_datetime([cutoff + timedelta(days=k) for k in range(1, 8)])})
-    days["weekday"] = days["day"].dt.weekday
+    days["weekday"] = days["day"].dt.day_of_week
     cand = g.merge(days, on="weekday")
     cols = PRED_COLS + ["p"]
     week = cand[(cand["p"] >= min_share) & (cand["day"] <= pd.Timestamp(cutoff + timedelta(days=window_days)))]

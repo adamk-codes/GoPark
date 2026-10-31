@@ -61,7 +61,7 @@ def clean(df: pd.DataFrame, cfg: dict, merge_rebook: bool = True) -> pd.DataFram
 
     local = out["start_time"].dt.tz_localize(None)
     out["day"] = local.dt.normalize()
-    out["weekday"] = local.dt.weekday
+    out["weekday"] = local.dt.day_of_week
     out["minute"] = local.dt.hour * 60 + local.dt.minute
     out["cancel_rate"] = out["user_id"].map(cancel_rate).astype(float)
     return out.sort_values("start_time").reset_index(drop=True)
