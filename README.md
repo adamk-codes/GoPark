@@ -60,6 +60,8 @@ uv run pytest
 Not built yet: evidence fusion, QR signing and camera scanning, offline outbox in the app, driver mode, rewards, the full Rhythm engine, evaluation, simulator. See the phases in ARCHITECTURE_PLAN.md §10.
 
 ## Workstreams (one person and one Claude Code session each)
+Full briefs and the kickoff prompt for each Claude session: [docs/briefs/](docs/briefs/README.md).
+
 | Owner | Folders | First tasks (phase P1) |
 |---|---|---|
 | P1 Mobile | `apps/mobile/` | Expo Router screens; camera QR + plate entry; overview; history; start the offline outbox (`expo-sqlite`) |
