@@ -44,7 +44,8 @@ CREATE TABLE IF NOT EXISTS bookings (
   start_at TEXT NOT NULL,
   end_at TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('booked','completed','cancelled','no_show')),
-  created_at TEXT
+  created_at TEXT,
+  updated_at TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_bookings_lot_start ON bookings(lot_id, start_at);
 CREATE INDEX IF NOT EXISTS idx_bookings_plate ON bookings(plate_norm);
@@ -64,6 +65,19 @@ CREATE TABLE IF NOT EXISTS signals (
   payload TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS idx_signals_lot_time ON signals(lot_id, observed_at);
+
+CREATE TABLE IF NOT EXISTS fusion_evidence (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  stay_id TEXT NOT NULL REFERENCES stays(id),
+  signal_id INTEGER NOT NULL REFERENCES signals(id),
+  direction TEXT NOT NULL DEFAULT 'arrival' CHECK (direction IN ('arrival','departure')),
+  prior REAL NOT NULL,
+  log_lr REAL NOT NULL,
+  weighted_log_lr REAL NOT NULL,
+  probability REAL NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE (stay_id, signal_id, direction)
+);
 
 -- Projection of what is physically in the lot.
 CREATE TABLE IF NOT EXISTS stays (
@@ -115,6 +129,8 @@ CREATE TABLE IF NOT EXISTS alerts (
   status TEXT NOT NULL DEFAULT 'open',
   message TEXT,
   created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT '',
+  estimated_fee REAL,
   resolved_by TEXT,
   resolved_at TEXT
 );

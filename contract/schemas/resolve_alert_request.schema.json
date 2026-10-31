@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "resolve_alert_request",
+  "type": "object",
+  "properties": {
+    "device_id": { "type": "string", "minLength": 1 },
+    "note": { "type": "string" }
+  },
+  "required": ["device_id"],
+  "additionalProperties": false
+}

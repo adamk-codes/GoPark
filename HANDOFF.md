@@ -1,7 +1,7 @@
 # Handoff — current status
 
 > **Read this first** if you're a new Claude Code / Cursor session picking up the work.
-> Last updated: 2026-10-31, during phase 1 (parallel build in progress).
+> Last updated: 2026-10-31, during phase 1 continuation (ops work in progress).
 > Repo: https://github.com/adamk-codes/GoPark · default branch `main`
 
 ## 1. What this project is (30 seconds)
@@ -23,6 +23,13 @@ Source-of-truth docs:
 | `8b6b03a` | **Phase 0:** contract + schemas + TS types, config (lots, holidays, fusion, rhythm), generator v0 (3 personas), Rhythm baseline B2, FastAPI ops + rhythm endpoints (scan/check-in/out, overview with predictions, alerts on the fly, audit, signals, basic sync, demo clock), React dashboard (live lots, pattern table), Expo attendant skeleton, 10 contract tests |
 | `c1ec1ce` | `docs/briefs/`: shared rules, kickoff prompt, briefs P1–P4 + H |
 | *(this file)* | `HANDOFF.md` |
+
+Follow-up session on branch `feat/ops-p1-continuation` from `e74b6bd`:
+- Contract-first endpoint schemas/types and implementation for signed booking QR, gate QR, walk-ins, persistent alerts, alert resolution, evidence timelines, sync cursors and offline event handling.
+- Configured signal fusion creates ARRIVING / CHECKED_IN / CHECKED_OUT projections and persists signal evidence; alert scheduler also marks no-shows and infers silent departures.
+- Added ops regression tests. `uv run pytest` → 16 passed; dashboard production build and mobile typecheck pass.
+- Node install reports 11 moderate mobile dependency audit findings; not auto-upgraded. Changes are on the feature branch and still need pushing/review.
+- Hardware simulator, WebSocket, dashboard/mobile integration of the new endpoints, and remaining P1/P2 workstreams remain open.
 
 Verified at P0: `uv run pytest` → 10 passed; dashboard builds; mobile type-checks (never run on a device).
 

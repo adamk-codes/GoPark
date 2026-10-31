@@ -75,6 +75,69 @@ export interface SyncEvent {
   body: Record<string, unknown>;
 }
 
+export interface BookingQr {
+  qr: string;
+}
+
+export interface QrPublicKey {
+  public_key: string;
+}
+
+export interface WalkInRequest {
+  lot_id: string;
+  plate: string;
+  device_id: string;
+  client_event_id: string;
+  observed_at?: ISOTime;
+  space_id?: string | null;
+}
+
+export interface ResolveAlertRequest {
+  device_id: string;
+  note?: string;
+}
+
+export type AlertType =
+  | "upcoming_arrival" | "overstay" | "unconfirmed_departure" | "no_show"
+  | "unknown_vehicle" | "plate_mismatch" | "low_confidence" | "anomaly";
+
+export interface Alert {
+  id: number;
+  type: AlertType;
+  severity: "info" | "warning" | "critical";
+  lot_id: string;
+  stay_id: string | null;
+  booking_id: string | null;
+  message: string;
+  estimated_fee: number | null;
+  status: "open" | "resolved";
+  created_at: ISOTime;
+  resolved_by: string | null;
+  resolved_at: ISOTime | null;
+}
+
+export interface GateCode {
+  code: string;
+  valid_until: ISOTime;
+}
+
+export interface StayEvidencePoint {
+  signal_id: number;
+  direction: "arrival" | "departure";
+  observed_at: ISOTime;
+  source: SignalSource;
+  kind: SignalKind;
+  log_lr: number;
+  weighted_log_lr: number;
+  probability: number;
+}
+
+export interface StayEvidence {
+  stay_id: string;
+  prior: number;
+  evidence: StayEvidencePoint[];
+}
+
 export type ScanResultCode =
   | "checked_in" | "checked_out" | "already_in" | "wrong_lot"
   | "too_early" | "expired" | "not_found" | "invalid_qr";

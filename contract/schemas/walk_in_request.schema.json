@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "walk_in_request",
+  "type": "object",
+  "properties": {
+    "lot_id": { "type": "string" },
+    "plate": { "type": "string", "minLength": 1 },
+    "device_id": { "type": "string", "minLength": 1 },
+    "client_event_id": { "type": "string", "minLength": 8 },
+    "observed_at": { "type": "string", "format": "date-time" },
+    "space_id": { "type": ["string", "null"] }
+  },
+  "required": ["lot_id", "plate", "device_id", "client_event_id"],
+  "additionalProperties": false
+}

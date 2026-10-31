@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "qr_public_key",
+  "type": "object",
+  "properties": {
+    "public_key": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" }
+  },
+  "required": ["public_key"],
+  "additionalProperties": false
+}
