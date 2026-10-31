@@ -29,3 +29,6 @@ Thumbs.db
 .vscode/
 .idea/
 expo_scaffold.log
+
+# Hidden generator personas: secret until the final evaluation (P4)
+tools/generator/hidden_personas.py
