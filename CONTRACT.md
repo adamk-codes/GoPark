@@ -79,7 +79,7 @@ signature = base64url(Ed25519 signature over the ASCII bytes "GP1.<payload>")
 ## 5.1 Walk-ins, alerts and evidence
 - `POST /walk_ins` takes `{lot_id, plate, device_id, client_event_id}` (optional `observed_at` and `space_id`) and returns a normal `scan_result`; its stay has `booking_id: null`.
 - `POST /alerts/{alert_id}/resolve` takes `{device_id, note?}`. Resolved alerts remain in storage for audit/sync, but are omitted from the default open-alert list.
-- `GET /stays/{stay_id}/evidence` returns `{stay_id, prior, evidence}`. Each evidence row records its source signal, observation time, log-likelihood contribution and resulting probability, in chronological order. Signals are preserved as raw append-only records.
+- `GET /stays/{stay_id}/evidence` returns `{stay_id, prior, evidence}`. Each evidence row records arrival/departure direction, source signal, observation time, log-likelihood contribution and resulting probability, in chronological order. Signals are preserved as raw append-only records.
 
 ## 6. Signals (driver app, simulator, cameras → server)
 Schema: `contract/schemas/signal.schema.json`.

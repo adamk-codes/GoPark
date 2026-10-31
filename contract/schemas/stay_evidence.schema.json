@@ -11,6 +11,7 @@
         "type": "object",
         "properties": {
           "signal_id": { "type": "integer" },
+          "direction": { "enum": ["arrival", "departure"] },
           "observed_at": { "type": "string", "format": "date-time" },
           "source": { "enum": ["geofence", "motion", "ble", "nfc", "gate_qr", "booking_qr", "camera_plate", "camera_spot", "car_bt", "attendant", "driver_confirm"] },
           "kind": { "enum": ["enter", "exit", "park", "unpark", "scan", "occupied", "vacant", "confirm", "deny"] },
@@ -18,7 +19,7 @@
           "weighted_log_lr": { "type": "number" },
           "probability": { "type": "number", "minimum": 0, "maximum": 1 }
         },
-        "required": ["signal_id", "observed_at", "source", "kind", "log_lr", "weighted_log_lr", "probability"],
+        "required": ["signal_id", "direction", "observed_at", "source", "kind", "log_lr", "weighted_log_lr", "probability"],
         "additionalProperties": false
       }
     }
