@@ -19,6 +19,11 @@ def load_config() -> dict:
     return yaml.safe_load((ROOT / "config" / "rhythm.yaml").read_text(encoding="utf-8"))
 
 
+def load_calendar() -> dict:
+    """Public holidays and term breaks (`config/holidays.yaml`)."""
+    return yaml.safe_load((ROOT / "config" / "holidays.yaml").read_text(encoding="utf-8"))
+
+
 def load_bookings(path: str | Path) -> pd.DataFrame:
     """Read a bookings CSV/JSON into a frame with local-time datetimes."""
     path = Path(path)

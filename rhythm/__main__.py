@@ -1,7 +1,7 @@
 """Rhythm CLI.
 
     uv run python -m rhythm run --input data/bookings.csv [--cutoff 2026-11-15]
-    uv run python -m rhythm evaluate ...   (P3)
+    uv run python -m rhythm evaluate [--input data/bookings.csv] [--truth data/truth.json] [--run-id latest]
 """
 from __future__ import annotations
 
@@ -21,14 +21,26 @@ def main() -> None:
     r.add_argument("--input", type=Path, default=ROOT / "data" / "bookings.csv")
     r.add_argument("--cutoff", type=date.fromisoformat, default=None)
     r.add_argument("--out", type=Path, default=None)
-    sub.add_parser("evaluate", help="backtest against truth (not built yet)")
+    e = sub.add_parser("evaluate", help="backtest vs baselines + pattern recovery → runs/<run_id>/metrics.json")
+    e.add_argument("--input", type=Path, default=ROOT / "data" / "bookings.csv")
+    e.add_argument("--truth", type=Path, default=None, help="default: truth.json next to the input")
+    e.add_argument("--run-id", default=None, help="write into this run (or 'latest'); default: a fresh run")
     args = ap.parse_args()
 
     if args.cmd == "run":
         info = run(args.input, args.cutoff, args.out)
         print(json.dumps({k: info[k] for k in ("run_id", "cutoff", "model_version", "counts")}, indent=1))
     else:
-        raise SystemExit("evaluate is not built yet (Rhythm owner, phase P2)")
+        from rhythm.evaluate import evaluate, headline
+        m = evaluate(args.input, args.truth, args.run_id)
+        print(f"run {m['run_id']} · test cutoffs {', '.join(m['cutoffs']['test'])}")
+        print(headline(m))
+        if "recovery" in m:
+            print("recovery (engine vs B2, day-set Jaccard / lot accuracy):")
+            for p, s in m["recovery"]["engine"]["by_persona"].items():
+                b = m["recovery"]["B2"]["by_persona"].get(p, {})
+                print(f"  {p}: {s.get('day_jaccard')} / {s.get('lot_accuracy')}  vs  {b.get('day_jaccard')} / "
+                      f"{b.get('lot_accuracy')}  false-habit {s.get('false_habit_rate')} vs {b.get('false_habit_rate')}")
 
 
 if __name__ == "__main__":
