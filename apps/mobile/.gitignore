@@ -39,3 +39,6 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# API URL for this laptop (see docs/briefs/P1-mobile.md)
+.env
