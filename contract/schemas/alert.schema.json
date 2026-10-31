@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "alert",
+  "type": "object",
+  "properties": {
+    "id": { "type": "integer" },
+    "type": { "enum": ["upcoming_arrival", "overstay", "unconfirmed_departure", "no_show", "unknown_vehicle", "plate_mismatch", "low_confidence", "anomaly"] },
+    "severity": { "enum": ["info", "warning", "critical"] },
+    "lot_id": { "type": "string" },
+    "stay_id": { "type": ["string", "null"] },
+    "booking_id": { "type": ["string", "null"] },
+    "message": { "type": "string" },
+    "estimated_fee": { "type": ["number", "null"], "minimum": 0 },
+    "status": { "enum": ["open", "resolved"] },
+    "created_at": { "type": "string", "format": "date-time" },
+    "resolved_by": { "type": ["string", "null"] },
+    "resolved_at": { "type": ["string", "null"], "format": "date-time" }
+  },
+  "required": ["id", "type", "severity", "lot_id", "stay_id", "booking_id", "message", "estimated_fee", "status", "created_at", "resolved_by", "resolved_at"],
+  "additionalProperties": false
+}

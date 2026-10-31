@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "stay_evidence",
+  "type": "object",
+  "properties": {
+    "stay_id": { "type": "string" },
+    "prior": { "type": "number", "minimum": 0, "maximum": 1 },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "signal_id": { "type": "integer" },
+          "observed_at": { "type": "string", "format": "date-time" },
+          "source": { "enum": ["geofence", "motion", "ble", "nfc", "gate_qr", "booking_qr", "camera_plate", "camera_spot", "car_bt", "attendant", "driver_confirm"] },
+          "kind": { "enum": ["enter", "exit", "park", "unpark", "scan", "occupied", "vacant", "confirm", "deny"] },
+          "log_lr": { "type": "number" },
+          "weighted_log_lr": { "type": "number" },
+          "probability": { "type": "number", "minimum": 0, "maximum": 1 }
+        },
+        "required": ["signal_id", "observed_at", "source", "kind", "log_lr", "weighted_log_lr", "probability"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["stay_id", "prior", "evidence"],
+  "additionalProperties": false
+}

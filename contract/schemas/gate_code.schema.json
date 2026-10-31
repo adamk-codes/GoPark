@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "gate_code",
+  "type": "object",
+  "properties": {
+    "code": { "type": "string", "pattern": "^GPG1\\.[A-Za-z0-9_-]+\\.[0-9a-f]{8}$" },
+    "valid_until": { "type": "string", "format": "date-time" }
+  },
+  "required": ["code", "valid_until"],
+  "additionalProperties": false
+}

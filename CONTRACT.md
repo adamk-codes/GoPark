@@ -70,9 +70,16 @@ GP1.<payload>.<signature>
 payload   = base64url(JSON, no padding): {"bid":"B000123","lot":"AUB","ph":"<sha256(plate_norm)[:16]>","s":"<start ISO>","e":"<end ISO>","n":"<8-char nonce>"}
 signature = base64url(Ed25519 signature over the ASCII bytes "GP1.<payload>")
 ```
+- `GET /bookings/{booking_id}/qr` returns `{"qr":"GP1.<payload>.<signature>"}`. The signing key is generated once and stored under the gitignored `keys/` directory; it must not be regenerated while a server is running.
 - The public key is served at `GET /keys/qr` and cached by the attendant app, so QR codes can be checked **offline**.
 - Offline check order: signature valid → lot matches this attendant's lot → now within `[s − 30 min, e]` → `bid` not already used on this device.
 - Rotating gate code (driver scans a screen at the gate): `GPG1.<lot>.<code>`, where `code = first 8 hex chars of HMAC-SHA256(gate_secret, floor(unix_time / 30))`. Valid within ±1 window of the server's receive time.
+- `GET /dev/gate/{lot_id}` is demo-only and returns the current `GPG1.<lot>.<code>` string with a local-time `valid_until` timestamp. Gate codes are accepted as `gate_qr` signal payloads and are never booking QR signatures.
+
+## 5.1 Walk-ins, alerts and evidence
+- `POST /walk_ins` takes `{lot_id, plate, device_id, client_event_id}` (optional `observed_at` and `space_id`) and returns a normal `scan_result`; its stay has `booking_id: null`.
+- `POST /alerts/{alert_id}/resolve` takes `{device_id, note?}`. Resolved alerts remain in storage for audit/sync, but are omitted from the default open-alert list.
+- `GET /stays/{stay_id}/evidence` returns `{stay_id, prior, evidence}`. Each evidence row records its source signal, observation time, log-likelihood contribution and resulting probability, in chronological order. Signals are preserved as raw append-only records.
 
 ## 6. Signals (driver app, simulator, cameras → server)
 Schema: `contract/schemas/signal.schema.json`.
@@ -95,14 +102,19 @@ Base URL `http://<laptop-ip>:8000`. JSON unless noted. Status column says what e
 | `POST /scan` | Body `{lot_id, device_id, client_event_id, qr? , booking_id?, plate?}` → `scan_result` | ✅ P0 (booking_id + plate; QR in P2) |
 | `POST /stays/{stay_id}/checkout` | Body `{device_id, client_event_id, method}` | ✅ P0 |
 | `GET /stays?lot_id=&state=` | Current stays | ✅ P0 |
+| `GET /bookings/{booking_id}/qr` | `{qr}` signed booking QR string | 🟡 P1 |
+| `POST /walk_ins` | `{lot_id, plate, device_id, client_event_id}` → `scan_result` | 🟡 P1 |
+| `GET /stays/{stay_id}/evidence` | Fused-confidence evidence timeline | 🟡 P1/P2 |
 | `GET /audit?lot_id=&limit=` | Activity history | ✅ P0 |
 | `POST /signals` | Body = signal, or `{"signals":[…]}` → `{accepted, duplicates}` | ✅ P0 stores only; fusion in P2 |
 | `POST /sync/push` | `{device_id, events:[sync_event]}` → `{acks:[id], conflicts:[{id, reason}]}` | 🟡 stub (P2) |
 | `GET /sync/pull?lot_id=&since=` | Changed bookings/stays/alerts since a cursor | 🟡 stub (P2) |
-| `GET /alerts?lot_id=` | Open alerts | 🟡 stub returns `[]` (P2) |
+| `GET /alerts?lot_id=` | Open alerts | 🟡 P0 computes; P1 persists |
+| `POST /alerts/{alert_id}/resolve` | `{device_id, note?}` resolves an alert | 🟡 P1 |
 | `POST /stays/{stay_id}/confirm` | Driver one-tap `{answer: "yes"|"no"}` | 🟡 stub (P3) |
 | `GET /users/{user_id}/rewards` | Points, grace minutes, tier | 🟡 stub (P3) |
-| `GET /keys/qr` | QR public key | 🟡 stub (P2) |
+| `GET /keys/qr` | `{public_key}` base64url Ed25519 public key | 🟡 stub (P2) |
+| `GET /dev/gate/{lot_id}` | `{code, valid_until}` rotating gate QR (demo only) | 🟡 P1 |
 | `WS /live?lot_id=` | Pushes `{type: "stay"|"alert", data}` | 🟡 not yet (P2) |
 | `POST /dev/reset` | Reload DB from `data/` (demo only) | ✅ P0 |
 
