@@ -123,6 +123,7 @@ export interface GateCode {
 
 export interface StayEvidencePoint {
   signal_id: number;
+  direction: "arrival" | "departure";
   observed_at: ISOTime;
   source: SignalSource;
   kind: SignalKind;
