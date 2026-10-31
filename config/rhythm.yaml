@@ -3,14 +3,20 @@ status_weights: {completed: 1.0, no_show: 0.6, cancelled: 0.4}
 rebook_merge_hours: 24
 inactive_gap_days_min: 21
 inactive_gap_multiplier: 3
+term_break_skip_ratio: 0.5   # a user "sits out" a term break if they book < half their usual rate in it
+# Stage switches for the ablation (all on = full engine).
+stages: {merge_rebook: true, activity: true, discover: true, prior: true, decay: true, chance_test: true}
 discover:
   eps_minutes: 45
   min_samples: 2
 habit:
   decay_half_life_weeks: 4
+  time_half_life_weeks: 16   # memory for time-of-day medians (tuned on validation)
   prior_strength_weeks: 2
-  min_posterior_p_gt_half: 0.8
+  min_posterior_p_gt_half: 0.65   # tuned on validation (0.5–0.8 grid)
+  prior_source: clusters     # prior = rate among time-cluster candidates at the lot × weekday
   max_chance_pvalue: 0.05
+  chance_rate_cap: 0.5       # null rate for the chance test; daily users are not "chance"
   min_hits: 3
   min_distinct_weeks: 3
   max_spread_minutes: 60
@@ -28,3 +34,5 @@ reminder:
 splits:   # weeks counted back from the dataset's last week
   test_weeks: 4
   validation_weeks: 4
+evaluate:
+  window_days: 7             # each weekly cutoff predicts the first booking of the next 7 days
