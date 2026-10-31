@@ -7,6 +7,7 @@ thresholds:
   attendant_after_min: 10
 default_prior: 0.30          # booking exists, nothing else known
 freshness_half_life_min: 15  # older evidence counts less
+overstay_usd_per_15_min: 1.0 # demo estimate only; payment is out of scope
 signals:
   geofence:      {log_lr: 1.39}   # ~4x
   motion:        {log_lr: 2.08}   # ~8x  (driving -> walking inside fence)

@@ -6,14 +6,20 @@ simple on-the-fly alerts. Fusion, QR signatures, rewards and live push are P2+.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+import hashlib
+import math
+import re
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+import yaml
 
 from api import db
 from api.deps import get_conn
+from api.ops import qr as qr_codes
 from api.rhythm_api.store import latest_priors
 
 router = APIRouter()
@@ -21,7 +27,9 @@ EARLY_MIN = 30           # scan accepted this many minutes before start
 OVERSTAY_GRACE_MIN = 10
 EXPECTED_WINDOW_MIN = 30
 DOUBLE_SCAN_MIN = 5      # a repeat scan within this window is not treated as a check-out
-ACTIVE = ("CHECKED_IN", "OVERSTAY")
+ACTIVE = ("CHECKED_IN", "OVERSTAY", "UNCONFIRMED_DEPARTURE")
+FUSION_CONFIG = yaml.safe_load((Path(__file__).resolve().parents[2] / "config" / "fusion.yaml").read_text())
+PLATE_PATTERN = re.compile(r"^[A-Z]\d{1,6}$")
 
 
 # ---------- serializers ----------
@@ -46,6 +54,13 @@ def stay_out(r) -> dict | None:
             "state": r["state"], "in_at": db.local(r["in_at"]), "in_method": r["in_method"],
             "in_conf": r["in_conf"], "out_at": db.local(r["out_at"]), "out_method": r["out_method"],
             "out_conf": r["out_conf"], "inferred": bool(r["inferred"])}
+
+
+def alert_out(r) -> dict:
+    return {"id": r["id"], "type": r["type"], "severity": r["severity"], "lot_id": r["lot_id"],
+            "stay_id": r["stay_id"], "booking_id": r["booking_id"], "message": r["message"] or "",
+            "estimated_fee": r["estimated_fee"], "status": r["status"], "created_at": db.local(r["created_at"]),
+            "resolved_by": r["resolved_by"], "resolved_at": db.local(r["resolved_at"])}
 
 
 def audit(conn, *, action, entity, entity_id, lot_id, before, after, observed_at, device_id=None,
@@ -76,12 +91,22 @@ def remember(conn, client_event_id: str | None, response: dict) -> dict:
 # ---------- basics ----------
 @router.get("/health")
 def health(conn=Depends(get_conn)):
-    return {"ok": True, "now": db.now(conn).isoformat(timespec="seconds"), "version": "p0"}
+    return {"ok": True, "now": db.now(conn).isoformat(timespec="seconds"), "version": "p1"}
 
 
 @router.get("/lots")
 def lots(conn=Depends(get_conn)):
     return [lot_out(r) for r in conn.execute("SELECT * FROM lots ORDER BY id")]
+
+
+@router.get("/bookings/{booking_id}/qr")
+def booking_qr(booking_id: str, conn=Depends(get_conn)):
+    booking = conn.execute("SELECT * FROM bookings WHERE id = ?", (booking_id.strip().upper(),)).fetchone()
+    if booking is None:
+        raise HTTPException(404, "Unknown booking")
+    if booking["status"] != "booked":
+        raise HTTPException(409, "Only active bookings have a driver QR")
+    return {"qr": qr_codes.sign_booking(booking)}
 
 
 def _lot(conn, lot_id: str):
@@ -162,12 +187,19 @@ def do_scan(conn, body: ScanIn) -> dict:
     _lot(conn, body.lot_id)
     t = db.now(conn)
     observed = db.parse(body.observed_at) if body.observed_at else t
+    booking = None
 
     if body.qr:
-        return remember(conn, body.client_event_id,
-                        _result("invalid_qr", "QR codes are not supported yet. Enter the booking ID or plate."))
+        payload = qr_codes.verify_booking_qr(body.qr)
+        if payload is None:
+            return remember(conn, body.client_event_id, _result("invalid_qr", "The booking QR signature is invalid."))
+        booking = conn.execute("SELECT * FROM bookings WHERE id = ?", (payload["bid"],)).fetchone()
+        if (booking is None or payload["lot"] != booking["lot_id"]
+                or payload["ph"] != hashlib.sha256((booking["plate_norm"] or "").encode()).hexdigest()[:16]
+                or payload["s"] != db.local(booking["start_at"]) or payload["e"] != db.local(booking["end_at"])):
+            return remember(conn, body.client_event_id, _result("invalid_qr", "The booking QR does not match an active booking."))
+        body = body.model_copy(update={"booking_id": booking["id"], "qr": None})
 
-    booking = None
     if body.booking_id:
         booking = conn.execute("SELECT * FROM bookings WHERE id = ?", (body.booking_id.strip().upper(),)).fetchone()
     elif body.plate:
@@ -200,10 +232,10 @@ def do_scan(conn, body: ScanIn) -> dict:
     if booking["status"] in ("cancelled", "no_show") or t > db.parse(booking["end_at"]):
         return remember(conn, body.client_event_id,
                         _result("expired", f"Booking for {plate_txt} ended at "
-                                           f"{db.local(booking['end_at'])[11:16]}.", booking))
+                                           f"{(db.local(booking['end_at']) or '')[11:16]}.", booking))
     if t < db.parse(booking["start_at"]) - timedelta(minutes=EARLY_MIN):
         return remember(conn, body.client_event_id,
-                        _result("too_early", f"{plate_txt} is booked from {db.local(booking['start_at'])[11:16]}.",
+                        _result("too_early", f"{plate_txt} is booked from {(db.local(booking['start_at']) or '')[11:16]}.",
                                 booking))
     if conn.execute("SELECT 1 FROM stays WHERE booking_id = ?", (booking["id"],)).fetchone():
         return remember(conn, body.client_event_id,
@@ -219,15 +251,19 @@ def do_scan(conn, body: ScanIn) -> dict:
           client_event_id=body.client_event_id)
     return remember(conn, body.client_event_id,
                     _result("checked_in", f"Checked in {plate_txt} at {booking['lot_id']} until "
-                                          f"{db.local(booking['end_at'])[11:16]}.", booking, stay))
+                                          f"{(db.local(booking['end_at']) or '')[11:16]}.", booking, stay))
 
 
 def _checkout(conn, stay, booking, observed: datetime, device_id, client_event_id, method) -> dict:
     before = stay_out(stay)
+    now_utc = db.utc(db.now(conn))
     conn.execute("UPDATE stays SET state = 'CHECKED_OUT', out_at = ?, out_method = ?, out_conf = 1.0,"
-                 " updated_at = ? WHERE id = ?", (db.utc(observed), method, db.utc(db.now(conn)), stay["id"]))
+                 " updated_at = ? WHERE id = ?", (db.utc(observed), method, now_utc, stay["id"]))
     if booking is not None:
-        conn.execute("UPDATE bookings SET status = 'completed' WHERE id = ?", (booking["id"],))
+        conn.execute("UPDATE bookings SET status = 'completed', updated_at = ? WHERE id = ?",
+                     (now_utc, booking["id"]))
+    conn.execute("UPDATE alerts SET status = 'resolved', resolved_by = 'system', resolved_at = ?, updated_at = ? "
+                 "WHERE stay_id = ? AND status = 'open'", (now_utc, now_utc, stay["id"]))
     stay = conn.execute("SELECT * FROM stays WHERE id = ?", (stay["id"],)).fetchone()
     audit(conn, action="check_out", entity="stay", entity_id=stay["id"], lot_id=stay["lot_id"], before=before,
           after=stay_out(stay), observed_at=observed, device_id=device_id, client_event_id=client_event_id)
@@ -238,6 +274,62 @@ def _checkout(conn, stay, booking, observed: datetime, device_id, client_event_i
 @router.post("/scan")
 def scan(body: ScanIn, conn=Depends(get_conn)):
     return do_scan(conn, body)
+
+
+class WalkInIn(BaseModel):
+    lot_id: str
+    plate: str
+    device_id: str
+    client_event_id: str
+    observed_at: str | None = None
+    space_id: str | None = None
+
+
+@router.post("/walk_ins")
+def walk_in(body: WalkInIn, conn=Depends(get_conn)):
+    if (seen := remembered(conn, body.client_event_id)) is not None:
+        return seen
+    lot = _lot(conn, body.lot_id)
+    plate_norm = db.normalize_plate(body.plate)
+    if not plate_norm or not PLATE_PATTERN.fullmatch(plate_norm):
+        raise HTTPException(422, "Plate must match the Lebanese format A123456")
+    existing = conn.execute(
+        f"SELECT * FROM stays WHERE plate_norm = ? AND state IN {ACTIVE} ORDER BY updated_at DESC LIMIT 1",
+        (plate_norm,),
+    ).fetchone()
+    if existing:
+        if existing["lot_id"] != body.lot_id:
+            raise HTTPException(409, f"This vehicle is already active at {existing['lot_id']}")
+        return remember(conn, body.client_event_id,
+                        _result("already_in", f"{plate_norm} is already checked in.", stay=existing))
+
+    now = db.now(conn)
+    observed = db.parse(body.observed_at) if body.observed_at else now
+    occupied = conn.execute(f"SELECT COUNT(*) FROM stays WHERE lot_id = ? AND state IN {ACTIVE}",
+                             (body.lot_id,)).fetchone()[0]
+    if occupied >= lot["capacity"]:
+        raise HTTPException(409, "This lot is at capacity")
+    if body.space_id:
+        space = conn.execute("SELECT id FROM spaces WHERE id = ? AND lot_id = ?", (body.space_id, body.lot_id)).fetchone()
+        if not space:
+            raise HTTPException(422, "Space does not belong to this lot")
+        if conn.execute(f"SELECT 1 FROM stays WHERE space_id = ? AND state IN {ACTIVE}",
+                        (body.space_id,)).fetchone():
+            raise HTTPException(409, "Space is already occupied")
+
+    stay_id = "W-" + hashlib.sha256(body.client_event_id.encode("utf-8")).hexdigest()[:16]
+    conn.execute(
+        "INSERT INTO stays(id, booking_id, lot_id, space_id, plate_norm, state, in_at, in_method, in_conf, "
+        "out_at, out_method, out_conf, inferred, updated_at) VALUES (?,NULL,?,?,?,'CHECKED_IN',?,'attendant',1.0,"
+        "NULL,NULL,NULL,0,?)",
+        (stay_id, body.lot_id, body.space_id, plate_norm, db.utc(observed), db.utc(now)),
+    )
+    stay = conn.execute("SELECT * FROM stays WHERE id = ?", (stay_id,)).fetchone()
+    audit(conn, action="walk_in", entity="stay", entity_id=stay_id, lot_id=body.lot_id, before=None,
+          after=stay_out(stay), observed_at=observed, device_id=body.device_id,
+          client_event_id=body.client_event_id)
+    return remember(conn, body.client_event_id,
+                    _result("checked_in", f"Registered walk-in {plate_norm} at {body.lot_id}.", stay=stay))
 
 
 class CheckoutIn(BaseModel):
@@ -276,6 +368,36 @@ def stays(lot_id: str | None = None, state: str | None = None, conn=Depends(get_
     return [stay_out(r) for r in conn.execute(q + " ORDER BY in_at DESC", args)]
 
 
+@router.get("/stays/{stay_id}/evidence")
+def stay_evidence(stay_id: str, conn=Depends(get_conn)):
+    stay = conn.execute("SELECT * FROM stays WHERE id = ?", (stay_id,)).fetchone()
+    if stay is None:
+        raise HTTPException(404, "Unknown stay")
+    prior = float(FUSION_CONFIG.get("default_prior", 0.3))
+    if stay["booking_id"]:
+        booking = conn.execute("SELECT user_id, start_at FROM bookings WHERE id = ?", (stay["booking_id"],)).fetchone()
+        if booking:
+            date = db.parse(booking["start_at"]).astimezone(db.TZ).date().isoformat()
+            for candidate in latest_priors():
+                if (candidate["user_id"] == booking["user_id"] and candidate["lot_id"] == stay["lot_id"]
+                        and candidate["date"] == date):
+                    prior = max(0.001, min(0.999, float(candidate["p"])))
+                    break
+    rows = conn.execute(
+        "SELECT f.signal_id, f.direction, s.observed_at, s.source, s.kind, f.log_lr, "
+        "f.weighted_log_lr, f.probability, f.prior FROM fusion_evidence f "
+        "JOIN signals s ON s.id = f.signal_id WHERE f.stay_id = ? "
+        "ORDER BY s.observed_at, f.id", (stay_id,),
+    ).fetchall()
+    if rows:
+        prior = rows[0]["prior"]
+    evidence = [{"signal_id": r["signal_id"], "direction": r["direction"],
+                 "observed_at": db.local(r["observed_at"]), "source": r["source"], "kind": r["kind"],
+                 "log_lr": r["log_lr"], "weighted_log_lr": r["weighted_log_lr"],
+                 "probability": r["probability"]} for r in rows]
+    return {"stay_id": stay_id, "prior": prior, "evidence": evidence}
+
+
 @router.get("/audit")
 def audit_log(lot_id: str | None = None, limit: int = 50, conn=Depends(get_conn)):
     q, args = "SELECT * FROM audit_log", []
@@ -310,6 +432,12 @@ def signals(body: SignalIn | SignalBatch, conn=Depends(get_conn)):
     received = db.utc(db.now(conn))
     accepted = 0
     for s in items:
+        if s.source == "gate_qr":
+            gate = conn.execute("SELECT gate_secret FROM lots WHERE id = ?", (s.lot_id,)).fetchone()
+            code = s.payload.get("code")
+            if gate is None or not code or not qr_codes.verify_gate_code(
+                    code, s.lot_id, gate["gate_secret"], db.now(conn)):
+                raise HTTPException(422, "Invalid or expired rotating gate code")
         cur = conn.execute(
             "INSERT OR IGNORE INTO signals(client_event_id, device_id, user_id, lot_id, booking_id, source, kind,"
             " observed_at, received_at, payload) VALUES (?,?,?,?,?,?,?,?,?,?)",
@@ -317,7 +445,26 @@ def signals(body: SignalIn | SignalBatch, conn=Depends(get_conn)):
              db.utc(db.parse(s.observed_at)), received, db.dumps(s.payload)))
         accepted += cur.rowcount
     conn.commit()
-    # TODO(P2): run fusion for the affected bookings and update stays.
+    affected = {s.booking_id for s in items if s.booking_id}
+    for s in items:
+        if s.source == "camera_plate":
+            plate = db.normalize_plate(s.payload.get("plate_norm"))
+            if plate:
+                observed_utc = db.utc(db.parse(s.observed_at))
+                booking = conn.execute(
+                    "SELECT b.id FROM bookings b WHERE b.plate_norm = ? AND b.lot_id = ? "
+                    "AND (b.status = 'booked' OR EXISTS (SELECT 1 FROM stays st WHERE st.booking_id=b.id "
+                    f"AND st.state IN {ACTIVE})) AND b.start_at <= ? AND b.end_at >= ? "
+                    "ORDER BY ABS(julianday(b.start_at) - julianday(?)) LIMIT 1",
+                    (plate, s.lot_id, db.utc(db.parse(s.observed_at) + timedelta(hours=12)),
+                     db.utc(db.parse(s.observed_at) - timedelta(hours=12)), observed_utc),
+                ).fetchone()
+                if booking:
+                    affected.add(booking["id"])
+    if affected:
+        from api.ops.fusion import fuse_booking
+        for booking_id in sorted(affected):
+            fuse_booking(conn, booking_id)
     return {"accepted": accepted, "duplicates": len(items) - accepted}
 
 
@@ -337,17 +484,77 @@ class SyncPushIn(BaseModel):
 
 @router.post("/sync/push")
 def sync_push(body: SyncPushIn, conn=Depends(get_conn)):
-    """Basic replay of offline actions in observed order. TODO(P2): anomaly queue for impossible orderings."""
+    """Replay offline actions in observation order and report invalid state transitions."""
     acks, conflicts, results = [], [], {}
-    for ev in sorted(body.events, key=lambda e: e.observed_at):
+    for ev in sorted(body.events, key=lambda e: db.parse(e.observed_at).astimezone(timezone.utc)):
         try:
             if ev.type == "scan":
+                booking_id = ev.body.get("booking_id")
+                historical = conn.execute("SELECT status FROM bookings WHERE id = ?", (booking_id,)).fetchone() if booking_id else None
+                if historical and historical["status"] in ("completed", "no_show"):
+                    _upsert_alert(conn, alert_type="anomaly", severity="critical", lot_id=ev.lot_id,
+                                  stay_id=None, booking_id=booking_id,
+                                  message=f"Offline scan {ev.client_event_id} arrived for a {historical['status']} booking.",
+                                  at=db.now(conn))
+                    conflicts.append({"id": ev.client_event_id, "reason": "booking is already completed or marked no-show"})
+                    continue
                 res = do_scan(conn, ScanIn(**{**ev.body, "lot_id": ev.lot_id, "device_id": body.device_id,
                                               "client_event_id": ev.client_event_id, "observed_at": ev.observed_at}))
+                if res["result"] == "already_in" and "already checked in and out" in res["message"]:
+                    _upsert_alert(conn, alert_type="anomaly", severity="critical", lot_id=ev.lot_id,
+                                  stay_id=None, booking_id=booking_id,
+                                  message=f"Offline scan {ev.client_event_id} arrived after checkout.", at=db.now(conn))
+                    conflicts.append({"id": ev.client_event_id, "reason": "booking was already checked out"})
+                    continue
             elif ev.type == "checkout":
-                res = do_checkout(conn, ev.body["stay_id"],
+                stay_id = ev.body.get("stay_id")
+                if not stay_id or conn.execute("SELECT 1 FROM stays WHERE id = ?", (stay_id,)).fetchone() is None:
+                    _upsert_alert(conn, alert_type="anomaly", severity="critical", lot_id=ev.lot_id,
+                                  stay_id=None, booking_id=ev.body.get("booking_id"),
+                                  message=f"Offline checkout {ev.client_event_id} arrived before a matching check-in.",
+                                  at=db.now(conn))
+                    conflicts.append({"id": ev.client_event_id, "reason": "checkout arrived before check-in; review required"})
+                    continue
+                res = do_checkout(conn, stay_id,
                                   CheckoutIn(device_id=body.device_id, client_event_id=ev.client_event_id,
                                              observed_at=ev.observed_at))
+            elif ev.type == "walk_in":
+                res = walk_in(WalkInIn(**{**ev.body, "lot_id": ev.lot_id, "device_id": body.device_id,
+                                          "client_event_id": ev.client_event_id, "observed_at": ev.observed_at}), conn)
+            elif ev.type == "resolve_alert":
+                alert_id = ev.body.get("alert_id")
+                if not isinstance(alert_id, int):
+                    conflicts.append({"id": ev.client_event_id, "reason": "resolve_alert requires an integer alert_id"})
+                    continue
+                res = resolve_alert(alert_id, ResolveAlertIn(device_id=body.device_id, note=ev.body.get("note")), conn)
+            elif ev.type == "override":
+                stay_id = ev.body.get("stay_id")
+                state = ev.body.get("state")
+                if state not in ("CHECKED_IN", "CHECKED_OUT") or not stay_id:
+                    conflicts.append({"id": ev.client_event_id, "reason": "override requires stay_id and CHECKED_IN or CHECKED_OUT"})
+                    continue
+                stay = conn.execute("SELECT * FROM stays WHERE id = ?", (stay_id,)).fetchone()
+                if stay is None:
+                    conflicts.append({"id": ev.client_event_id, "reason": "override references an unknown stay"})
+                    continue
+                before = stay_out(stay)
+                observed = db.parse(ev.observed_at)
+                if state == "CHECKED_IN":
+                    conn.execute("UPDATE stays SET state = ?, in_at = ?, in_method = 'attendant', in_conf = 1.0, "
+                                 "out_at = NULL, out_method = NULL, out_conf = NULL, inferred = 0, updated_at = ? WHERE id = ?",
+                                 (state, db.utc(observed), db.utc(db.now(conn)), stay_id))
+                else:
+                    conn.execute("UPDATE stays SET state = ?, out_at = ?, out_method = 'attendant', out_conf = 1.0, "
+                                 "updated_at = ? WHERE id = ?", (state, db.utc(observed), db.utc(db.now(conn)), stay_id))
+                    if stay["booking_id"]:
+                        conn.execute("UPDATE bookings SET status = 'completed', updated_at = ? WHERE id = ?",
+                                     (db.utc(db.now(conn)), stay["booking_id"]))
+                updated = conn.execute("SELECT * FROM stays WHERE id = ?", (stay_id,)).fetchone()
+                audit(conn, action="override", entity="stay", entity_id=stay_id, lot_id=stay["lot_id"],
+                      before=before, after=stay_out(updated), observed_at=observed, device_id=body.device_id,
+                      client_event_id=ev.client_event_id)
+                res = _result("checked_in" if state == "CHECKED_IN" else "checked_out", "Stay state overridden.",
+                              conn.execute("SELECT * FROM bookings WHERE id = ?", (stay["booking_id"],)).fetchone(), updated)
             else:
                 conflicts.append({"id": ev.client_event_id, "reason": f"{ev.type} not supported yet"})
                 continue
@@ -355,45 +562,163 @@ def sync_push(body: SyncPushIn, conn=Depends(get_conn)):
             results[ev.client_event_id] = res
         except HTTPException as e:
             conflicts.append({"id": ev.client_event_id, "reason": str(e.detail)})
+        except (KeyError, TypeError, ValueError) as e:
+            conflicts.append({"id": ev.client_event_id, "reason": f"invalid {ev.type} event: {e}"})
+    conn.commit()
     return {"acks": acks, "conflicts": conflicts, "results": results}
 
 
 @router.get("/sync/pull")
 def sync_pull(lot_id: str, since: str | None = None, conn=Depends(get_conn)):
-    """Today's bookings and stays for a lot (the attendant's offline cache). TODO(P2): real cursor."""
+    """Return the initial lot cache or rows changed after the supplied UTC cursor."""
+    _lot(conn, lot_id)
     t = db.now(conn)
     day_start = t.replace(hour=0, minute=0, second=0, microsecond=0)
-    bks = conn.execute("SELECT * FROM bookings WHERE lot_id = ? AND start_at >= ? AND start_at < ?",
-                       (lot_id, db.utc(day_start), db.utc(day_start + timedelta(days=1)))).fetchall()
-    sts = conn.execute("SELECT * FROM stays WHERE lot_id = ?", (lot_id,)).fetchall()
-    return {"cursor": t.isoformat(timespec="seconds"), "bookings": [booking_out(b) for b in bks],
-            "stays": [stay_out(s) for s in sts]}
+    refresh_alerts(conn)
+    if since:
+        try:
+            cursor = db.utc(db.parse(since))
+        except ValueError as exc:
+            raise HTTPException(422, "since must be an ISO 8601 timestamp") from exc
+        bks = conn.execute("SELECT * FROM bookings WHERE lot_id = ? AND updated_at > ? ORDER BY updated_at",
+                           (lot_id, cursor)).fetchall()
+        sts = conn.execute("SELECT * FROM stays WHERE lot_id = ? AND updated_at > ? ORDER BY updated_at",
+                           (lot_id, cursor)).fetchall()
+        als = conn.execute("SELECT * FROM alerts WHERE lot_id = ? AND updated_at > ? ORDER BY updated_at",
+                           (lot_id, cursor)).fetchall()
+    else:
+        bks = conn.execute("SELECT * FROM bookings WHERE lot_id = ? AND start_at >= ? AND start_at < ?",
+                           (lot_id, db.utc(day_start), db.utc(day_start + timedelta(days=1)))).fetchall()
+        sts = conn.execute("SELECT * FROM stays WHERE lot_id = ?", (lot_id,)).fetchall()
+        als = conn.execute("SELECT * FROM alerts WHERE lot_id = ?", (lot_id,)).fetchall()
+    changed = [r["updated_at"] for group in (bks, sts, als) for r in group if r["updated_at"]]
+    next_cursor = max([db.utc(t), *changed])
+    return {"cursor": db.local(next_cursor), "bookings": [booking_out(b) for b in bks],
+            "stays": [stay_out(s) for s in sts], "alerts": [alert_out(a) for a in als]}
 
 
-# ---------- alerts (computed on the fly in P0) ----------
+# ---------- persistent alerts ----------
+def _upsert_alert(conn, *, alert_type, severity, lot_id, stay_id, booking_id, message,
+                  estimated_fee=None, at=None):
+    now_utc = db.utc(at or db.now(conn))
+    current = conn.execute(
+        "SELECT id FROM alerts WHERE type = ? AND stay_id IS ? AND booking_id IS ? AND status = 'open' "
+        "ORDER BY id DESC LIMIT 1", (alert_type, stay_id, booking_id),
+    ).fetchone()
+    if current:
+        conn.execute("UPDATE alerts SET severity = ?, message = ?, estimated_fee = ?, updated_at = ? WHERE id = ?",
+                     (severity, message, estimated_fee, now_utc, current["id"]))
+    else:
+        conn.execute("INSERT INTO alerts(type, lot_id, stay_id, booking_id, severity, status, message, created_at, "
+                     "updated_at, estimated_fee) VALUES (?,?,?,?,?,'open',?,?,?,?)",
+                     (alert_type, lot_id, stay_id, booking_id, severity, message, now_utc, now_utc, estimated_fee))
+
+
+def refresh_alerts(conn) -> None:
+    """Reconcile persistent alert rows against the demo clock; safe to call repeatedly."""
+    t = db.now(conn)
+    now_utc = db.utc(t)
+    soon = db.utc(t + timedelta(minutes=EXPECTED_WINDOW_MIN))
+
+    upcoming = conn.execute(
+        "SELECT b.* FROM bookings b WHERE b.status = 'booked' AND b.start_at BETWEEN ? AND ? "
+        "AND NOT EXISTS (SELECT 1 FROM stays s WHERE s.booking_id = b.id) ORDER BY b.start_at",
+        (now_utc, soon),
+    ).fetchall()
+    upcoming_ids = {b["id"] for b in upcoming}
+    for b in upcoming:
+        _upsert_alert(conn, alert_type="upcoming_arrival", severity="info", lot_id=b["lot_id"], stay_id=None,
+                      booking_id=b["id"], message=f"{b['plate_display']} due at {(db.local(b['start_at']) or '')[11:16]}.", at=t)
+
+    # Remove stale upcoming notifications from the open queue while retaining their history.
+    for alert in conn.execute("SELECT id, booking_id FROM alerts WHERE type = 'upcoming_arrival' AND status = 'open'"):
+        if alert["booking_id"] not in upcoming_ids:
+            conn.execute("UPDATE alerts SET status = 'resolved', resolved_by = 'system', resolved_at = ?, "
+                         "updated_at = ? WHERE id = ?", (now_utc, now_utc, alert["id"]))
+
+    ended = conn.execute(
+        "SELECT s.*, b.end_at, b.plate_display FROM stays s JOIN bookings b ON b.id = s.booking_id "
+        f"WHERE s.state IN {ACTIVE} AND b.end_at < ?", (now_utc,),
+    ).fetchall()
+    for stay in ended:
+        mins_past = max(0, int((t - db.parse(stay["end_at"])).total_seconds() // 60))
+        if stay["state"] == "CHECKED_IN":
+            conn.execute("UPDATE stays SET state = 'UNCONFIRMED_DEPARTURE', updated_at = ? WHERE id = ?",
+                         (now_utc, stay["id"]))
+            _upsert_alert(conn, alert_type="unconfirmed_departure", severity="warning", lot_id=stay["lot_id"],
+                          stay_id=stay["id"], booking_id=stay["booking_id"],
+                          message=f"{stay['plate_display']} booking ended; departure is unconfirmed.", at=t)
+        if db.parse(stay["end_at"]) + timedelta(minutes=OVERSTAY_GRACE_MIN) < t:
+            rate = float(FUSION_CONFIG.get("overstay_usd_per_15_min", 1.0))
+            fee = round(math.ceil((mins_past - OVERSTAY_GRACE_MIN) / 15) * rate, 2)
+            conn.execute("UPDATE stays SET state = 'OVERSTAY', updated_at = ? WHERE id = ? AND state = 'CHECKED_IN'",
+                         (now_utc, stay["id"]))
+            _upsert_alert(conn, alert_type="overstay", severity="warning", lot_id=stay["lot_id"],
+                          stay_id=stay["id"], booking_id=stay["booking_id"],
+                          message=f"{stay['plate_display']} is {mins_past} min past its booking end; estimated fee ${fee:.2f}.",
+                          estimated_fee=fee, at=t)
+        inferred_at = db.parse(stay["end_at"]) + timedelta(minutes=30)
+        if t >= inferred_at:
+            before = stay_out(stay)
+            conn.execute(
+                "UPDATE stays SET state='CHECKED_OUT', out_at=?, out_method='inferred', out_conf=0.6, "
+                "inferred=1, updated_at=? WHERE id=?",
+                (db.utc(inferred_at), now_utc, stay["id"]),
+            )
+            conn.execute("UPDATE bookings SET status='completed', updated_at=? WHERE id=?",
+                         (now_utc, stay["booking_id"]))
+            updated = conn.execute("SELECT * FROM stays WHERE id=?", (stay["id"],)).fetchone()
+            audit(conn, action="inferred_check_out", entity="stay", entity_id=stay["id"], lot_id=stay["lot_id"],
+                  before=before, after=stay_out(updated), observed_at=inferred_at, actor_type="system")
+            conn.execute(
+                "UPDATE alerts SET status='resolved', resolved_by='system', resolved_at=?, updated_at=? "
+                "WHERE stay_id=? AND status='open'",
+                (now_utc, now_utc, stay["id"]),
+            )
+
+    no_shows = conn.execute(
+        "SELECT b.* FROM bookings b WHERE b.status = 'booked' AND b.end_at < ? "
+        "AND NOT EXISTS (SELECT 1 FROM stays s WHERE s.booking_id = b.id)", (now_utc,),
+    ).fetchall()
+    for booking in no_shows:
+        conn.execute("UPDATE bookings SET status = 'no_show', updated_at = ? WHERE id = ?",
+                     (now_utc, booking["id"]))
+        _upsert_alert(conn, alert_type="no_show", severity="warning", lot_id=booking["lot_id"], stay_id=None,
+                      booking_id=booking["id"], message=f"{booking['plate_display']} did not arrive before the booking ended.",
+                      at=t)
+    conn.commit()
+
+
 @router.get("/alerts")
 def alerts(lot_id: str | None = None, conn=Depends(get_conn)):
-    t = db.now(conn)
-    lot_filter, args = ("AND s.lot_id = ?", [lot_id]) if lot_id else ("", [])
-    out = []
-    for r in conn.execute(
-            f"SELECT s.*, b.end_at, b.plate_display FROM stays s JOIN bookings b ON b.id = s.booking_id"
-            f" WHERE s.state IN {ACTIVE} AND b.end_at < ? {lot_filter}",
-            [db.utc(t - timedelta(minutes=OVERSTAY_GRACE_MIN))] + args):
-        mins = int((t - db.parse(r["end_at"])).total_seconds() // 60)
-        out.append({"type": "overstay", "severity": "warning", "lot_id": r["lot_id"], "stay_id": r["id"],
-                    "booking_id": r["booking_id"],
-                    "message": f"{r['plate_display']} is {mins} min past its booking end.",
-                    "created_at": db.local(r["end_at"])})
-    b_filter = "AND b.lot_id = ?" if lot_id else ""
-    for r in conn.execute(
-            f"SELECT b.* FROM bookings b WHERE b.status = 'booked' AND b.start_at BETWEEN ? AND ? {b_filter}"
-            f" AND NOT EXISTS (SELECT 1 FROM stays s WHERE s.booking_id = b.id) ORDER BY b.start_at",
-            [db.utc(t), db.utc(t + timedelta(minutes=EXPECTED_WINDOW_MIN))] + args):
-        out.append({"type": "upcoming_arrival", "severity": "info", "lot_id": r["lot_id"], "stay_id": None,
-                    "booking_id": r["id"], "message": f"{r['plate_display']} due at {db.local(r['start_at'])[11:16]}.",
-                    "created_at": t.isoformat(timespec="seconds")})
-    return out
+    refresh_alerts(conn)
+    q, args = "SELECT * FROM alerts WHERE status = 'open'", []
+    if lot_id:
+        q += " AND lot_id = ?"
+        args.append(lot_id)
+    rows = conn.execute(q + " ORDER BY created_at DESC, id DESC", args).fetchall()
+    return [alert_out(r) for r in rows]
+
+
+class ResolveAlertIn(BaseModel):
+    device_id: str
+    note: str | None = None
+
+
+@router.post("/alerts/{alert_id}/resolve")
+def resolve_alert(alert_id: int, body: ResolveAlertIn, conn=Depends(get_conn)):
+    row = conn.execute("SELECT * FROM alerts WHERE id = ?", (alert_id,)).fetchone()
+    if row is None:
+        raise HTTPException(404, "Unknown alert")
+    if row["status"] == "open":
+        now = db.now(conn)
+        conn.execute("UPDATE alerts SET status = 'resolved', resolved_by = ?, resolved_at = ?, updated_at = ? "
+                     "WHERE id = ?", (body.device_id, db.utc(now), db.utc(now), alert_id))
+        audit(conn, action="resolve_alert", entity="alert", entity_id=str(alert_id), lot_id=row["lot_id"],
+              before={"status": "open"}, after={"status": "resolved", "note": body.note},
+              observed_at=now, device_id=body.device_id, actor_type="attendant")
+        conn.commit()
+    return alert_out(conn.execute("SELECT * FROM alerts WHERE id = ?", (alert_id,)).fetchone())
 
 
 # ---------- not built yet ----------
@@ -413,7 +738,14 @@ def rewards(user_id: str, conn=Depends(get_conn)):
 
 @router.get("/keys/qr")
 def qr_key():
-    raise HTTPException(501, "QR signing keys are not built yet (phase P2).")
+    return {"public_key": qr_codes.public_key_b64()}
+
+
+@router.get("/dev/gate/{lot_id}")
+def get_gate_code(lot_id: str, conn=Depends(get_conn)):
+    lot = _lot(conn, lot_id)
+    code, valid_until = qr_codes.gate_code(lot_id, lot["gate_secret"], db.now(conn))
+    return {"code": code, "valid_until": valid_until.isoformat(timespec="seconds")}
 
 
 # ---------- demo controls ----------

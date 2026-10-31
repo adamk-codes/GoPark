@@ -82,7 +82,7 @@ def set_clock(conn, demo_now: datetime) -> None:
 def reset(conn, data_dir: Path = DATA_DIR) -> dict:
     """Drop everything and reload lots + bookings from config/ and data/."""
     conn.executescript(";".join(f"DROP TABLE IF EXISTS {t}" for t in (
-        "points_ledger", "alerts", "processed_events", "audit_log", "stays", "signals",
+        "points_ledger", "alerts", "processed_events", "audit_log", "fusion_evidence", "stays", "signals",
         "bookings", "vehicles", "users", "spaces", "lots", "meta")))
     conn.executescript((ROOT / "api" / "schema.sql").read_text(encoding="utf-8"))
 
@@ -105,6 +105,7 @@ def reset(conn, data_dir: Path = DATA_DIR) -> dict:
     space_free_at: dict[str, str] = {}
 
     users, vehicles, bookings = set(), set(), []
+    seeded_at = utc(parse(DEFAULT_DEMO_NOW))
     with open(data_dir / "bookings.csv", newline="", encoding="utf-8") as f:
         for r in csv.DictReader(f):
             plate_norm = normalize_plate(r.get("plate"))
@@ -120,11 +121,12 @@ def reset(conn, data_dir: Path = DATA_DIR) -> dict:
                         space, space_free_at[sid] = sid, end
                         break
             bookings.append((r["booking_id"], r["user_id"], r["location_id"], space, plate_norm, r.get("plate"),
-                             start, end, r["status"], utc(parse(r["created_at"])) if r.get("created_at") else None))
+                             start, end, r["status"], utc(parse(r["created_at"])) if r.get("created_at") else None,
+                             seeded_at))
 
     conn.executemany("INSERT INTO users(id) VALUES (?)", [(u,) for u in sorted(users)])
     conn.executemany("INSERT INTO vehicles(user_id, plate_norm, plate_display) VALUES (?,?,?)", sorted(vehicles))
-    conn.executemany("INSERT INTO bookings VALUES (?,?,?,?,?,?,?,?,?,?)", bookings)
+    conn.executemany("INSERT INTO bookings VALUES (?,?,?,?,?,?,?,?,?,?,?)", bookings)
 
     # Cars that should already be parked when the demo clock starts.
     t0 = parse(DEFAULT_DEMO_NOW)
@@ -143,7 +145,22 @@ def reset(conn, data_dir: Path = DATA_DIR) -> dict:
 
 
 def ensure_seeded(conn) -> None:
+    conn.executescript((ROOT / "api" / "schema.sql").read_text(encoding="utf-8"))
     has = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='bookings'").fetchone()
+    if has:
+        booking_columns = {r["name"] for r in conn.execute("PRAGMA table_info(bookings)")}
+        if "updated_at" not in booking_columns:
+            conn.execute("ALTER TABLE bookings ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''")
+            conn.execute("UPDATE bookings SET updated_at = ? WHERE updated_at = ''", (utc(now(conn)),))
+        alert_table = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='alerts'").fetchone()
+        if alert_table:
+            alert_columns = {r["name"] for r in conn.execute("PRAGMA table_info(alerts)")}
+            if "updated_at" not in alert_columns:
+                conn.execute("ALTER TABLE alerts ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''")
+                conn.execute("UPDATE alerts SET updated_at = created_at WHERE updated_at = ''")
+            if "estimated_fee" not in alert_columns:
+                conn.execute("ALTER TABLE alerts ADD COLUMN estimated_fee REAL")
+        conn.commit()
     if not has or not conn.execute("SELECT 1 FROM bookings LIMIT 1").fetchone():
         if not (DATA_DIR / "bookings.csv").exists():
             raise RuntimeError("data/bookings.csv missing; run `uv run python -m tools.generator` first")
