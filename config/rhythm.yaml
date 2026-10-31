@@ -1,0 +1,30 @@
+# Rhythm engine (Challenge 2) settings. Tune only on the validation split.
+status_weights: {completed: 1.0, no_show: 0.6, cancelled: 0.4}
+rebook_merge_hours: 24
+inactive_gap_days_min: 21
+inactive_gap_multiplier: 3
+discover:
+  eps_minutes: 45
+  min_samples: 2
+habit:
+  decay_half_life_weeks: 4
+  prior_strength_weeks: 2
+  min_posterior_p_gt_half: 0.8
+  max_chance_pvalue: 0.05
+  min_hits: 3
+  min_distinct_weeks: 3
+  max_spread_minutes: 60
+predict:
+  horizon_days: 14
+  hit_tolerance_minutes: 60
+reminder:
+  target_precision: 0.8
+  default_threshold: 0.7
+  locked_in_threshold: 0.9
+  cooldown_hours: 48
+  evening_before_hour: 20
+  morning_cutoff_hour: 11
+  lead_hours_default: 2
+splits:   # weeks counted back from the dataset's last week
+  test_weeks: 4
+  validation_weeks: 4

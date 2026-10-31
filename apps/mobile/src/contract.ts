@@ -1,0 +1,179 @@
+// Mirrors contract/schemas/*.schema.json and CONTRACT.md. Apps copy this file
+// with `npm run contract`; edit only here, through a contract PR.
+
+export type ISOTime = string; // ISO 8601 with offset, e.g. 2026-11-16T08:00:00+02:00
+export type ISODate = string; // YYYY-MM-DD
+
+export type BookingStatus = "booked" | "completed" | "cancelled" | "no_show";
+export type LotKind = "open" | "underground" | "gated" | "valet";
+export type StayState =
+  | "EXPECTED" | "ARRIVING" | "CHECKED_IN" | "OVERSTAY" | "CHECKED_OUT"
+  | "UNCONFIRMED_DEPARTURE" | "NO_SHOW" | "CANCELLED";
+export type Method = "auto" | "driver" | "attendant" | "inferred";
+export type SignalSource =
+  | "geofence" | "motion" | "ble" | "nfc" | "gate_qr" | "booking_qr"
+  | "camera_plate" | "camera_spot" | "car_bt" | "attendant" | "driver_confirm";
+export type SignalKind =
+  | "enter" | "exit" | "park" | "unpark" | "scan" | "occupied" | "vacant" | "confirm" | "deny";
+export type PatternState = "emerging" | "active" | "fading" | "ended";
+export type ReminderTier = "locked_in" | "at_risk" | "emerging" | "none";
+
+export interface Lot {
+  id: string;
+  name: string;
+  kind: LotKind;
+  capacity: number;
+  has_spaces: boolean;
+  center_lat: number;
+  center_lng: number;
+  radius_m: number;
+}
+
+export interface Booking {
+  booking_id: string;
+  user_id: string;
+  location_id: string;
+  start_time: ISOTime;
+  end_time: ISOTime;
+  status: BookingStatus;
+  created_at?: ISOTime | null;
+  plate?: string | null;
+}
+
+export interface Stay {
+  id: string;
+  booking_id: string | null;
+  lot_id: string;
+  plate_norm: string | null;
+  state: StayState;
+  in_at: ISOTime | null;
+  in_method: Method | null;
+  in_conf: number | null;
+  out_at: ISOTime | null;
+  out_method: Method | null;
+  out_conf: number | null;
+  inferred: boolean;
+}
+
+export interface Signal {
+  client_event_id: string;
+  device_id: string;
+  user_id?: string | null;
+  lot_id: string;
+  booking_id?: string | null;
+  source: SignalSource;
+  kind: SignalKind;
+  observed_at: ISOTime;
+  payload?: Record<string, unknown>;
+}
+
+export interface SyncEvent {
+  client_event_id: string;
+  type: "scan" | "checkout" | "walk_in" | "resolve_alert" | "override";
+  lot_id: string;
+  observed_at: ISOTime;
+  body: Record<string, unknown>;
+}
+
+export type ScanResultCode =
+  | "checked_in" | "checked_out" | "already_in" | "wrong_lot"
+  | "too_early" | "expired" | "not_found" | "invalid_qr";
+
+export interface ScanResult {
+  result: ScanResultCode;
+  message: string;
+  booking: Booking | null;
+  stay: Stay | null;
+  suggest: "register_walk_in" | null;
+}
+
+export interface ExpectedArrival {
+  booking_id: string | null;
+  user_id: string;
+  plate: string | null;
+  at: ISOTime;
+  p: number;
+  source: "booking" | "prediction";
+}
+
+export interface LotOverview {
+  lot: Lot;
+  now: ISOTime;
+  counts: { capacity: number; occupied: number; reserved: number; free: number };
+  expected_soon: ExpectedArrival[];
+  spaces: { id: string; label: string; state: "free" | "reserved" | "occupied" }[] | null;
+}
+
+export interface AuditEntry {
+  id: number;
+  client_event_id: string | null;
+  actor_type: "attendant" | "driver" | "system";
+  actor_id: string | null;
+  action: string;
+  entity: string;
+  entity_id: string;
+  before: unknown;
+  after: unknown;
+  observed_at: ISOTime;
+  received_at: ISOTime;
+  device_id: string | null;
+}
+
+export interface PatternRow {
+  user_id: string;
+  pattern_id: string;
+  is_primary: boolean;
+  pattern_type: "recurring" | "occasional" | "insufficient_history";
+  state: PatternState | null;
+  days: ("Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat" | "Sun")[];
+  label: string;
+  time_window: { center: string; spread_min: number } | null;
+  location_id: string | null;
+  support: number;
+  active_weeks: number;
+  recurrence_prob: number | null;
+  next_booking: { at: ISOTime; location_id: string } | null;
+  confidence: number;
+  reminder: { recommend: boolean; tier: ReminderTier; at: ISOTime | null };
+  last_booking_date: ISODate | null;
+  frequency_per_week: number;
+  inactivity_detected: boolean;
+  cancel_rate: number;
+  change_date: ISODate | null;
+  reason: string;
+  run_id: string;
+  model_version: string;
+}
+
+export interface ArrivalPrior {
+  user_id: string;
+  lot_id: string;
+  date: ISODate;
+  window_start: ISOTime;
+  window_end: ISOTime;
+  p: number;
+  pattern_id?: string | null;
+}
+
+export interface LotForecast {
+  lot_id: string;
+  date: ISODate;
+  hour: number;
+  expected_arrivals: number;
+}
+
+export interface RunInfo {
+  run_id: string;
+  created_at: ISOTime;
+  cutoff: ISODate;
+  input: string;
+  model_version: string;
+  params: Record<string, unknown>;
+}
+
+export interface UserRhythm {
+  user_id: string;
+  patterns: PatternRow[];
+  history: Booking[];
+  heatmap: number[][]; // [weekday 0=Mon..6][hour 0..23] booking counts
+}

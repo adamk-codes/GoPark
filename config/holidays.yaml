@@ -1,0 +1,17 @@
+# Days that break normal routines. Used by the generator (people skip bookings)
+# and by the rhythm engine (these weeks don't count against a routine).
+# Dates are local (Asia/Beirut). Verify against the official calendar before the demo.
+public_holidays:
+  - 2026-05-01   # Labour Day
+  - 2026-05-25   # Resistance and Liberation Day
+  - 2026-05-27   # Eid al-Adha (approx.)
+  - 2026-06-16   # Islamic New Year (approx.)
+  - 2026-08-15   # Assumption
+  - 2026-08-25   # Prophet's Birthday (approx.)
+  - 2026-11-22   # Independence Day
+  - 2026-12-25   # Christmas
+
+# Ranges when university-going users mostly stop booking.
+term_breaks:
+  - {start: 2026-06-20, end: 2026-08-30, name: AUB summer break}
+  - {start: 2026-12-19, end: 2027-01-10, name: AUB winter break}

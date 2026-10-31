@@ -1,0 +1,49 @@
+# Lots used by the generator, the ops API and the rhythm engine.
+# `kind` drives which detection signals are expected (see ARCHITECTURE_PLAN.md §3.3).
+# Coordinates are approximate and only used for geofences in the simulator.
+timezone: Asia/Beirut
+lots:
+  - id: AUB
+    name: AUB Main Gate Lot
+    kind: open
+    capacity: 60
+    has_spaces: false
+    center: {lat: 33.9006, lng: 35.4787}
+    radius_m: 120
+  - id: BDD
+    name: Beirut Digital District Garage
+    kind: underground
+    capacity: 120
+    has_spaces: false
+    center: {lat: 33.8869, lng: 35.5132}
+    radius_m: 100
+    beacon: {uuid: "6f1c2a3e-0b7d-4e59-9a61-60a0c0b2d001", major: 1}
+  - id: LAU
+    name: LAU Beirut Gated Lot
+    kind: gated
+    capacity: 60
+    has_spaces: true
+    center: {lat: 33.8932, lng: 35.4778}
+    radius_m: 80
+  - id: HAMRA
+    name: Hamra Street Valet
+    kind: valet
+    capacity: 40
+    has_spaces: false
+    center: {lat: 33.8963, lng: 35.4826}
+    radius_m: 80
+  - id: VERDUN
+    name: Verdun Plaza Parking
+    kind: open
+    capacity: 50
+    has_spaces: false
+    center: {lat: 33.8840, lng: 35.4870}
+    radius_m: 100
+  - id: ACHRAFIEH
+    name: Achrafieh Sassine Garage
+    kind: underground
+    capacity: 80
+    has_spaces: false
+    center: {lat: 33.8867, lng: 35.5226}
+    radius_m: 100
+    beacon: {uuid: "6f1c2a3e-0b7d-4e59-9a61-60a0c0b2d001", major: 2}

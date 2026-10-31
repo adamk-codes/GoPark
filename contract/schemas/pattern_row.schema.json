@@ -1,0 +1,200 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "pattern_row",
+  "type": "object",
+  "properties": {
+    "user_id": {
+      "type": "string"
+    },
+    "pattern_id": {
+      "type": "string"
+    },
+    "is_primary": {
+      "type": "boolean"
+    },
+    "pattern_type": {
+      "enum": [
+        "recurring",
+        "occasional",
+        "insufficient_history"
+      ]
+    },
+    "state": {
+      "enum": [
+        "emerging",
+        "active",
+        "fading",
+        "ended",
+        null
+      ]
+    },
+    "days": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "Mon",
+          "Tue",
+          "Wed",
+          "Thu",
+          "Fri",
+          "Sat",
+          "Sun"
+        ]
+      }
+    },
+    "label": {
+      "type": "string"
+    },
+    "time_window": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "center": {
+          "type": "string",
+          "pattern": "^\\d{2}:\\d{2}$"
+        },
+        "spread_min": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "center",
+        "spread_min"
+      ]
+    },
+    "location_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "support": {
+      "type": "number"
+    },
+    "active_weeks": {
+      "type": "integer"
+    },
+    "recurrence_prob": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 1
+    },
+    "next_booking": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "location_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "at",
+        "location_id"
+      ]
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "reminder": {
+      "type": "object",
+      "properties": {
+        "recommend": {
+          "type": "boolean"
+        },
+        "tier": {
+          "enum": [
+            "locked_in",
+            "at_risk",
+            "emerging",
+            "none"
+          ]
+        },
+        "at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "recommend",
+        "tier",
+        "at"
+      ]
+    },
+    "last_booking_date": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date"
+    },
+    "frequency_per_week": {
+      "type": "number"
+    },
+    "inactivity_detected": {
+      "type": "boolean"
+    },
+    "cancel_rate": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "change_date": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "model_version": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "user_id",
+    "pattern_id",
+    "is_primary",
+    "pattern_type",
+    "state",
+    "days",
+    "label",
+    "time_window",
+    "location_id",
+    "support",
+    "active_weeks",
+    "recurrence_prob",
+    "next_booking",
+    "confidence",
+    "reminder",
+    "last_booking_date",
+    "frequency_per_week",
+    "inactivity_detected",
+    "cancel_rate",
+    "change_date",
+    "reason",
+    "run_id",
+    "model_version"
+  ],
+  "additionalProperties": false
+}

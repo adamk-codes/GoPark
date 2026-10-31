@@ -1,0 +1,28 @@
+[project]
+name = "gopark-sense"
+version = "0.1.0"
+description = "GoPark x AUB hackathon: presence detection (C1) + booking pattern engine (C2)"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.7",
+    "pandas>=2.2",
+    "numpy>=2.0",
+    "scipy>=1.13",
+    "scikit-learn>=1.5",
+    "pyyaml>=6.0",
+    "jsonschema>=4.22",
+    "python-multipart>=0.0.9",
+    "cryptography>=43",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.2", "httpx>=0.27"]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

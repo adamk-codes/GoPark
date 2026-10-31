@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "arrival_prior",
+  "type": "object",
+  "properties": {
+    "user_id": {
+      "type": "string"
+    },
+    "lot_id": {
+      "type": "string"
+    },
+    "date": {
+      "type": "string",
+      "format": "date"
+    },
+    "window_start": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "window_end": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "p": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "pattern_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "user_id",
+    "lot_id",
+    "date",
+    "window_start",
+    "window_end",
+    "p"
+  ],
+  "additionalProperties": false
+}

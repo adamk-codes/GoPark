@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "scan_result",
+  "type": "object",
+  "properties": {
+    "result": {
+      "enum": [
+        "checked_in",
+        "checked_out",
+        "already_in",
+        "wrong_lot",
+        "too_early",
+        "expired",
+        "not_found",
+        "invalid_qr"
+      ]
+    },
+    "message": {
+      "type": "string"
+    },
+    "booking": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "stay": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "suggest": {
+      "enum": [
+        "register_walk_in",
+        null
+      ]
+    }
+  },
+  "required": [
+    "result",
+    "message",
+    "booking",
+    "stay",
+    "suggest"
+  ],
+  "additionalProperties": false
+}

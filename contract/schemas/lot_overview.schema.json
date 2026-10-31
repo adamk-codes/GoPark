@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "lot_overview",
+  "type": "object",
+  "properties": {
+    "lot": {
+      "type": "object"
+    },
+    "now": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "counts": {
+      "type": "object",
+      "properties": {
+        "capacity": {
+          "type": "integer"
+        },
+        "occupied": {
+          "type": "integer"
+        },
+        "reserved": {
+          "type": "integer"
+        },
+        "free": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "capacity",
+        "occupied",
+        "reserved",
+        "free"
+      ]
+    },
+    "expected_soon": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "booking_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "plate": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "p": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "source": {
+            "enum": [
+              "booking",
+              "prediction"
+            ]
+          }
+        },
+        "required": [
+          "user_id",
+          "at",
+          "p",
+          "source"
+        ]
+      }
+    },
+    "spaces": {
+      "type": [
+        "array",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "lot",
+    "now",
+    "counts",
+    "expected_soon",
+    "spaces"
+  ],
+  "additionalProperties": false
+}

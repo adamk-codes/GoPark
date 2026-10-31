@@ -1,0 +1,21 @@
+# Evidence fusion settings for check-in/check-out (ARCHITECTURE_PLAN.md §3.1).
+# log_lr = natural log of the likelihood ratio each signal contributes.
+# Starting values only; tune them with simulator and field-test logs.
+thresholds:
+  auto_confirm: 0.95
+  ask_driver: 0.60
+  attendant_after_min: 10
+default_prior: 0.30          # booking exists, nothing else known
+freshness_half_life_min: 15  # older evidence counts less
+signals:
+  geofence:      {log_lr: 1.39}   # ~4x
+  motion:        {log_lr: 2.08}   # ~8x  (driving -> walking inside fence)
+  ble:           {log_lr: 2.71}   # ~15x
+  nfc:           {log_lr: 4.6}    # ~100x
+  camera_plate:  {log_lr: 3.91}   # ~50x
+  camera_spot:   {log_lr: 1.1}    # ~3x  (a car is in a spot, identity unknown)
+  gate_qr:       {log_lr: 5.3}    # ~200x
+  car_bt:        {log_lr: 2.08}   # ~8x
+  booking_qr:    {definitive: true}
+  attendant:     {definitive: true}
+  driver_confirm: {definitive: true}

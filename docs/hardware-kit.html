@@ -1,0 +1,292 @@
+<title>GoPark Hardware Kit</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: single phone-first column; checklist cards grouped by priority, then who-does-what. */
+:root{
+  --bg:#f4f7f5; --surface:#ffffff; --fg:#14211b; --muted:#56655d; --line:#d9e3dd;
+  --accent:#178a54; --accent-soft:#e3f3ea; --warn:#a2500f; --warn-soft:#fbeedf; --stretch:#5b5f9e; --stretch-soft:#ececf7;
+  --font-body:"Atkinson Hyperlegible",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0f1512; --surface:#17201b; --fg:#e4ede8; --muted:#9aaba2; --line:#2a3731;
+  --accent:#4cc68a; --accent-soft:#183326; --warn:#f0a35e; --warn-soft:#33251a; --stretch:#a9adf0; --stretch-soft:#23243a; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0f1512; --surface:#17201b; --fg:#e4ede8; --muted:#9aaba2; --line:#2a3731;
+  --accent:#4cc68a; --accent-soft:#183326; --warn:#f0a35e; --warn-soft:#33251a; --stretch:#a9adf0; --stretch-soft:#23243a; color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--font-body);font-size:16px;line-height:1.5;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px 48px}
+.wrap{max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:32px}
+h1,h2,h3{text-wrap:balance;margin:0;line-height:1.2}
+h1{font-size:1.9rem}
+h2{font-size:1.3rem}
+h3{font-size:1rem}
+p{margin:0}
+.lede{color:var(--muted);max-width:62ch}
+header{display:flex;flex-direction:column;gap:12px}
+.eyebrow{font-family:var(--font-mono);font-size:.75rem;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);font-weight:600}
+.budget{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.budget div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:2px}
+.budget b{font-family:var(--font-mono);font-size:1.15rem;font-variant-numeric:tabular-nums}
+.budget span{color:var(--muted);font-size:.85rem}
+section{display:flex;flex-direction:column;gap:14px}
+.sec-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap}
+.count{font-family:var(--font-mono);font-size:.8rem;color:var(--muted)}
+.group{display:flex;flex-direction:column;gap:8px}
+.group-label{display:flex;align-items:center;gap:8px;font-weight:700}
+.pill{font-family:var(--font-mono);font-size:.7rem;letter-spacing:.06em;text-transform:uppercase;padding:2px 8px;border-radius:99px;font-weight:600}
+.pill.core{background:var(--accent-soft);color:var(--accent)}
+.pill.demo{background:var(--warn-soft);color:var(--warn)}
+.pill.stretch{background:var(--stretch-soft);color:var(--stretch)}
+.pill.have{background:var(--line);color:var(--muted)}
+.item{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 14px;display:grid;grid-template-columns:auto 1fr auto;gap:4px 12px;align-items:start}
+.item input{width:22px;height:22px;margin:2px 0 0;accent-color:var(--accent);grid-row:span 3}
+.item .name{font-weight:700;min-width:0}
+.item .price{font-family:var(--font-mono);font-size:.85rem;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
+.item .spec{grid-column:2 / 4;font-size:.92rem;min-width:0}
+.item .spec code,.task code{font-family:var(--font-mono);font-size:.85em;background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:0 4px;overflow-wrap:anywhere}
+.item .why{grid-column:2 / 4;font-size:.85rem;color:var(--muted)}
+.item.done .name{text-decoration:line-through;color:var(--muted)}
+.avoid{background:var(--warn-soft);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:8px}
+.avoid h3{color:var(--warn)}
+.avoid ul{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:4px}
+.task{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 14px;display:grid;grid-template-columns:auto 1fr;gap:4px 12px}
+.task input{width:22px;height:22px;margin:2px 0 0;accent-color:var(--accent);grid-row:span 2}
+.task .t{font-weight:700}
+.task .d{font-size:.92rem;color:var(--muted)}
+.task.done .t{text-decoration:line-through;color:var(--muted)}
+.phase{font-family:var(--font-mono);font-size:.78rem;color:var(--accent);font-weight:600;letter-spacing:.04em}
+.claude{border-left:3px solid var(--accent);padding:4px 0 4px 14px;display:flex;flex-direction:column;gap:8px}
+.claude ul{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px}
+.timeline{overflow-x:auto}
+table{border-collapse:collapse;width:100%;min-width:520px;font-size:.92rem}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-family:var(--font-mono);font-size:.75rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+td:first-child{font-family:var(--font-mono);white-space:nowrap;color:var(--accent);font-weight:600}
+.reset{align-self:flex-start;font:inherit;font-size:.85rem;background:transparent;color:var(--muted);border:1px solid var(--line);border-radius:8px;padding:6px 12px;cursor:pointer}
+.reset:hover{color:var(--fg);border-color:var(--muted)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.note{font-size:.85rem;color:var(--muted)}
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">GoPark × AUB Hackathon · Challenge 1 hardware</span>
+    <h1>GoPark Hardware Kit</h1>
+    <p class="lede">What to buy for the detection demo, what to avoid, and which jobs need a person's hands. Tick items as you go; ticks are saved on this phone only.</p>
+    <div class="budget" aria-label="Budget estimate">
+      <div><b>$60–120</b><span>Core kit (must buy)</span></div>
+      <div><b>+$15–25</b><span>Demo gate (recommended)</span></div>
+      <div><b>+$115–165</b><span>Pi plate camera (optional)</span></div>
+    </div>
+    <p class="note">Prices are rough USD estimates. Local prices in Lebanon may differ.</p>
+  </header>
+
+  <section id="shop">
+    <div class="sec-head"><h2>Shopping list</h2><span class="count" id="shopCount"></span></div>
+    <div id="shopGroups"></div>
+    <div class="avoid">
+      <h3>Do not buy</h3>
+      <ul>
+        <li><b>AirTag, Tile or Galaxy SmartTag.</b> They use closed networks, so our app can't detect them.</li>
+        <li><b>MIFARE Classic 1K NFC tags.</b> iPhones can't read them. Get NTAG213/215.</li>
+        <li><b>Charge-only USB cables.</b> They power the ESP32 but can't upload code to it.</li>
+        <li><b>Cheap non-official Pi power supplies.</b> They cause random crashes from low voltage.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="people">
+    <div class="sec-head"><h2>Jobs only a person can do</h2><span class="count" id="taskCount"></span></div>
+    <p class="lede">Claude can write all the code and flash boards plugged into this laptop. It can't touch the phones, the parking lot, or anything that needs a password or a signature.</p>
+    <div id="taskGroups"></div>
+  </section>
+
+  <section id="claude">
+    <h2>What Claude handles</h2>
+    <div class="claude">
+      <ul>
+        <li>All the code: beacon, NFC and geofence handling in the app; ESP32 beacon and gate firmware; the rotating gate QR page; the Pi plate pipeline; the trip simulator.</li>
+        <li>Exact settings to type in: beacon UUID, Major and Minor numbers, power levels, NFC URLs, wiring pins.</li>
+        <li>Flashing the ESP32 once it's plugged into the laptop running Claude Code.</li>
+        <li>Setting up the Raspberry Pi over SSH once it's on Wi-Fi and added as a connection.</li>
+        <li>Step-by-step test scripts for the field test, and turning the logs into accuracy numbers and charts.</li>
+        <li>Debugging from error messages, logs and screenshots you send.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="when">
+    <h2>When each job happens</h2>
+    <div class="timeline">
+      <table>
+        <thead><tr><th>When</th><th>Hardware person</th><th>Claude</th></tr></thead>
+        <tbody>
+          <tr><td>Before</td><td>Buy, charge, insert batteries, check the Apple/Mac situation, ask the lot for permission</td><td>Writes the beacon, NFC and pin settings sheet</td></tr>
+          <tr><td>Hours 0–6</td><td>Phone developer modes, install dev builds, set beacon IDs, write NFC tags</td><td>Builds the app hooks, flashes the ESP32</td></tr>
+          <tr><td>Hours 6–20</td><td>Wire the demo gate, test the attendant app on phones</td><td>Gate firmware, gate QR page, fixes from your reports</td></tr>
+          <tr><td>Hours 20–28</td><td>Place beacons, signal walk test, integration test on phones</td><td>Tunes the detection settings from your logs</td></tr>
+          <tr><td>Hours 28–34</td><td>Field test runs + video</td><td>Turns the logs into accuracy numbers for the slides</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">Hands-on total: about 6–9 h without the Pi camera, 9–13 h with it.</p>
+  </section>
+
+  <button class="reset" id="reset" type="button">Clear all ticks</button>
+</div>
+
+<script>
+const SHOP = [
+  {g:"core", label:"Core kit", items:[
+    {id:"beacon", name:"BLE beacons × 3", price:"$10–25 each",
+     spec:"iBeacon-compatible, nRF52-based, replaceable coin battery (<code>CR2032</code> or <code>CR2477</code>). The vendor app must let you set <code>UUID</code>, <code>Major</code>, <code>Minor</code>, transmit power and interval.",
+     why:"Detects arrival in the underground lot where GPS doesn't work. Two at the ramp, one spare."},
+    {id:"nfc", name:"NFC sticker tags, pack of 10", price:"$5–12",
+     spec:"<code>NTAG213</code> or <code>NTAG215</code>. Add 2–3 <b>anti-metal</b> tags if they'll go on metal pillars or poles.",
+     why:"Tap-to-check-in at the entrance or spot. Works on both iPhone and Android."},
+    {id:"esp32", name:"ESP32 dev boards × 2", price:"$6–12 each",
+     spec:"<code>ESP32-WROOM-32</code> DevKit (or ESP32-S3/C3) with a USB chip (<code>CP2102</code> or <code>CH340</code>). USB-C preferred.",
+     why:"One acts as a backup beacon Claude can program; the other runs the demo gate."},
+    {id:"cable", name:"USB data cables × 2", price:"$3–6",
+     spec:"Matching the ESP32's port (USB-C or micro-USB). Must be <b>data</b> cables.",
+     why:"For flashing the boards from the laptop."},
+    {id:"powerbank", name:"Power banks × 2 (10,000 mAh)", price:"$15–25 each",
+     spec:"At least one USB-A and one USB-C output.",
+     why:"Keeps phones and the ESP32 alive during the field test. Skip if the team already has them."},
+    {id:"mount", name:"Car phone mount + small tripod or clamp", price:"$10–15",
+     spec:"Any vent or dashboard mount; a flexible tripod for filming.",
+     why:"Holds the driver phone steady and films the field test."},
+    {id:"print", name:"Laminated QR signs × 3", price:"$3",
+     spec:"A4 print + lamination. Claude provides the files.",
+     why:"Printed gate QR fallback and booking QR samples for the demo."},
+    {id:"tape", name:"Mounting supplies", price:"$5",
+     spec:"Double-sided foam tape, zip ties, Velcro strips.",
+     why:"Fixes beacons and tags without damaging the lot."}
+  ]},
+  {g:"demo", label:"Demo gate (recommended)", items:[
+    {id:"servo", name:"SG90 micro servo × 2", price:"$2–4 each",
+     spec:"Standard 3-wire SG90 (one spare).",
+     why:"A small barrier arm that lifts on auto check-in. Judges can see detection happen."},
+    {id:"leds", name:"LEDs + resistors + buzzer", price:"$3",
+     spec:"Green and red 5 mm LEDs, <code>220Ω</code> resistors, one active buzzer.",
+     why:"Green = checked in, red = rejected scan, beep = feedback."},
+    {id:"bread", name:"Breadboard + jumper wires", price:"$5",
+     spec:"Half-size breadboard, male-male and male-female jumpers.",
+     why:"No soldering needed."},
+    {id:"tablet", name:"Old Android phone or tablet", price:"$0 (borrow)",
+     spec:"Any screen with a browser and a charger.",
+     why:"Shows the rotating gate QR that changes every 30 seconds."}
+  ]},
+  {g:"stretch", label:"Pi plate camera (optional, cut first)", items:[
+    {id:"pi", name:"Raspberry Pi 5 (4 GB) or Pi 4 (4 GB)", price:"$60–80",
+     spec:"With the <b>official</b> power supply (27 W USB-C for Pi 5), a 32 GB <code>A2</code> microSD and a case with a fan.",
+     why:"Runs plate recognition at a gate. A laptop + USB webcam runs the same code, so only buy if budget allows."},
+    {id:"cam", name:"Pi Camera Module 3", price:"$25–35",
+     spec:"Standard or Wide. Skip if you'll use a USB webcam you already have.",
+     why:"Reads plates at the gate."}
+  ]},
+  {g:"have", label:"Check you already have (don't buy)", items:[
+    {id:"android", name:"Android phone (Android 10 or newer)", price:"have",
+     spec:"Main driver phone for background detection.", why:"Runs the driver app development build."},
+    {id:"iphone", name:"iPhone", price:"have",
+     spec:"Attendant app in Expo Go; driver app only if a Mac or Apple developer account exists.", why:"Shows the app works on both platforms."},
+    {id:"laptop", name:"Laptop with Claude Code", price:"have",
+     spec:"With free USB ports.", why:"Flashes the ESP32 and runs the backend for the demo."}
+  ]}
+];
+
+const TASKS = [
+  {phase:"Before the event", items:[
+    {id:"t-buy", t:"Buy the kit and check each part against its specs", d:"Look for NTAG213/215, a configurable beacon app, data cables."},
+    {id:"t-charge", t:"Charge the power banks and put batteries in the beacons", d:"Keep a spare coin battery."},
+    {id:"t-apple", t:"Sort out iPhone builds", d:"Find a Mac with Xcode or an Apple developer account. Without one, the driver demo runs on Android only."},
+    {id:"t-accounts", t:"Create the Expo account", d:"Claude can't create accounts or type passwords."},
+    {id:"t-permit", t:"Get permission from a parking lot", d:"To stick tags, place beacons and film there."}
+  ]},
+  {phase:"Setup (hours 0–20)", items:[
+    {id:"t-dev", t:"Turn on developer mode on the phones", d:"Android: USB debugging. iPhone: Developer Mode + trust the developer certificate."},
+    {id:"t-install", t:"Install the development builds and accept every permission", d:"Location <code>Always</code>, Bluetooth / Nearby devices, Motion, Notifications, Camera. On Android, turn off battery optimisation for the app."},
+    {id:"t-beacon", t:"Set the beacon IDs in the vendor app", d:"Type in the UUID, Major, Minor, power and interval from Claude's settings sheet. About 10 min per beacon."},
+    {id:"t-nfc", t:"Write the NFC tags with the NFC Tools app", d:"Use the URLs Claude gives you. Test on both phones. Don't lock the tags until the final day."},
+    {id:"t-esp", t:"Plug the ESP32 into the Claude laptop", d:"Claude flashes it. If Windows doesn't see it, install the CP2102/CH340 driver; if upload stalls, hold the BOOT button."},
+    {id:"t-wire", t:"Wire the demo gate", d:"Servo: brown = GND, red = 5V, orange = signal pin. LEDs through 220Ω resistors. Claude sends the pin diagram."},
+    {id:"t-pi", t:"(Optional) Prepare the Raspberry Pi", d:"Flash the SD card with Raspberry Pi Imager with SSH + Wi-Fi turned on, boot it, find its IP, and add it as an SSH connection so Claude can set it up. Mount the camera at plate height."}
+  ]},
+  {phase:"Field test (hours 20–34)", items:[
+    {id:"t-place", t:"Place the beacons and tags", d:"Ramp entrance and exit; tags at the entrance and a sample spot."},
+    {id:"t-walk", t:"Do the signal walk test", d:"Walk the route Claude gives you while the app logs signal strength; adjust beacon power if it fires too early or too late."},
+    {id:"t-runs", t:"Do the scripted runs", d:"Arrive, park, leave, repeated for each lot type. On a second phone, tap the ground-truth button at the real moment of each event."},
+    {id:"t-video", t:"Record the video", d:"Film the phone screen and the car together so the timing is visible."},
+    {id:"t-send", t:"Send the logs to Claude", d:"Claude turns them into accuracy numbers for the slides."}
+  ]},
+  {phase:"Demo day", items:[
+    {id:"t-demo", t:"Run the hardware during the demo", d:"Charge everything, place the gate prop, have a spare beacon and battery ready."}
+  ]}
+];
+
+const KEY = "gopark-hw-ticks";
+let ticks = {};
+try { ticks = JSON.parse(localStorage.getItem(KEY) || "{}") || {}; } catch (e) { ticks = {}; }
+function save(){ try { localStorage.setItem(KEY, JSON.stringify(ticks)); } catch (e) {} }
+
+function renderShop(){
+  const host = document.getElementById("shopGroups");
+  host.innerHTML = "";
+  host.style.display = "flex"; host.style.flexDirection = "column"; host.style.gap = "20px";
+  SHOP.forEach(group => {
+    const g = document.createElement("div"); g.className = "group";
+    g.innerHTML = `<div class="group-label"><span class="pill ${group.g}">${group.g === "have" ? "have" : group.g}</span>${group.label}</div>`;
+    group.items.forEach(it => {
+      const row = document.createElement("label");
+      row.className = "item" + (ticks[it.id] ? " done" : "");
+      row.htmlFor = it.id;
+      row.innerHTML = `<input type="checkbox" id="${it.id}" ${ticks[it.id] ? "checked" : ""}>
+        <span class="name">${it.name}</span><span class="price">${it.price}</span>
+        <span class="spec">${it.spec}</span><span class="why">${it.why}</span>`;
+      g.appendChild(row);
+    });
+    host.appendChild(g);
+  });
+}
+
+function renderTasks(){
+  const host = document.getElementById("taskGroups");
+  host.innerHTML = "";
+  host.style.display = "flex"; host.style.flexDirection = "column"; host.style.gap = "20px";
+  TASKS.forEach(p => {
+    const g = document.createElement("div"); g.className = "group";
+    g.innerHTML = `<div class="phase">${p.phase}</div>`;
+    p.items.forEach(it => {
+      const row = document.createElement("label");
+      row.className = "task" + (ticks[it.id] ? " done" : "");
+      row.htmlFor = it.id;
+      row.innerHTML = `<input type="checkbox" id="${it.id}" ${ticks[it.id] ? "checked" : ""}>
+        <span class="t">${it.t}</span><span class="d">${it.d}</span>`;
+      g.appendChild(row);
+    });
+    host.appendChild(g);
+  });
+}
+
+function counts(){
+  const shopIds = SHOP.filter(g => g.g !== "have").flatMap(g => g.items.map(i => i.id));
+  const taskIds = TASKS.flatMap(p => p.items.map(i => i.id));
+  const n = ids => ids.filter(id => ticks[id]).length;
+  document.getElementById("shopCount").textContent = `${n(shopIds)} of ${shopIds.length} bought`;
+  document.getElementById("taskCount").textContent = `${n(taskIds)} of ${taskIds.length} done`;
+}
+
+document.addEventListener("change", e => {
+  if (e.target.type !== "checkbox") return;
+  ticks[e.target.id] = e.target.checked;
+  e.target.closest("label").classList.toggle("done", e.target.checked);
+  save(); counts();
+});
+document.getElementById("reset").addEventListener("click", () => {
+  ticks = {}; save(); renderShop(); renderTasks(); counts();
+});
+
+renderShop(); renderTasks(); counts();
+</script>

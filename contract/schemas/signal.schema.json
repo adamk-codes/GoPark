@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "signal",
+  "type": "object",
+  "properties": {
+    "client_event_id": {
+      "type": "string",
+      "minLength": 8
+    },
+    "device_id": {
+      "type": "string"
+    },
+    "user_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "lot_id": {
+      "type": "string"
+    },
+    "booking_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source": {
+      "enum": [
+        "geofence",
+        "motion",
+        "ble",
+        "nfc",
+        "gate_qr",
+        "booking_qr",
+        "camera_plate",
+        "camera_spot",
+        "car_bt",
+        "attendant",
+        "driver_confirm"
+      ]
+    },
+    "kind": {
+      "enum": [
+        "enter",
+        "exit",
+        "park",
+        "unpark",
+        "scan",
+        "occupied",
+        "vacant",
+        "confirm",
+        "deny"
+      ]
+    },
+    "observed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "payload": {
+      "type": "object"
+    },
+    "truth": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "client_event_id",
+    "device_id",
+    "lot_id",
+    "source",
+    "kind",
+    "observed_at"
+  ],
+  "additionalProperties": false
+}
