@@ -40,7 +40,7 @@ Output in `--out` (default `data/`): `bookings.csv`, `stays.csv`, `truth.json`, 
 
 Every routine also has `jitter_min` (the start-time spread used). Holidays: 90% skipped. Statuses: per-user cancel 2–15%, no-show 2%.
 
-**Capacity.** Bookings are taken first come, first served by `created_at`. If the lot is full in the 15-minute slot a booking starts in, it moves ±15 then ±30 min, else it is dropped (sold out). Cancelled bookings don't hold a space. At 300 users nothing is full. The lots are small (410 spaces in total), so at 2,000 users about 2% shift and 42% drop, mostly all-day commuters in the underground garages.
+**Capacity.** Bookings are taken first come, first served by `created_at`. If the lot has no free space in any 15-minute slot a booking covers, it moves ±15 then ±30 min, else it is dropped (sold out). Cancelled bookings don't hold a space. At 300 users nothing is full. The lots are small (410 spaces in total), so at 2,000 users about 2% shift and 42% drop, mostly all-day commuters in the underground garages.
 
 ## `--messy`
 
