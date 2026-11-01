@@ -1,17 +1,17 @@
 # Evidence fusion settings for check-in/check-out (ARCHITECTURE_PLAN.md §3.1, api/ops/fusion.py).
 # log_lr = natural log of the likelihood ratio each signal contributes.
-# Starting values; `python -m tools.simulator evaluate --tune` reports how they score on the traces.
+# Tuned on seed-42 traces (`python -m tools.simulator evaluate --tune`, before/after in runs/fusion_metrics.json).
 thresholds:
   auto_confirm: 0.95
   ask_driver: 0.60
   attendant_after_min: 10      # still below ask_driver this long after the first evidence -> low_confidence alert
 default_prior: 0.30            # booking exists, nothing else known (C2 priors replace it inside their window)
 max_prior: 0.99                # cap on C2 priors
-departure_prior: 0.30
-freshness_half_life_min: 15    # older evidence counts less
+departure_prior: 0.4
+freshness_half_life_min: 120   # older evidence counts less (tuned from 15: buffered underground signals)
 min_evidence_log_lr: 0.0       # auto-confirm also needs this much evidence beyond the prior
 min_stay_min: 5                # departure evidence must come this long after the arrival
-elsewhere_factor: 1.0          # weak arrival evidence at another lot counts this much against this lot
+elsewhere_factor: 0.0          # weak arrival evidence at another lot counts this much against this lot
 strong_elsewhere_log_lr: 4.0   # strong arrival evidence (plate, NFC, QR) at another lot counts against this lot
 still_parked_max_min: 180      # a spot camera that still sees the car delays the inferred checkout this long
 overstay_usd_per_15_min: 1.0   # demo estimate only; payment is out of scope
@@ -23,8 +23,8 @@ matching:                      # attributing camera signals (no booking_id) to b
   after_end_min: 180
   fuzzy_below_conf: 0.8        # plates read below this OCR confidence may match with one wrong character
 signals:
-  geofence:      {log_lr: 1.39}   # ~4x
-  motion:        {log_lr: 2.08}   # ~8x  (driving -> walking inside fence)
+  geofence:      {log_lr: 1.042}  # ~2.8x (tuned from 1.39: drive-bys)
+  motion:        {log_lr: 4.16}   # ~64x (tuned from 2.08; generator has no false motion, re-check on field data)
   ble:           {log_lr: 2.71}   # ~15x
   nfc:           {log_lr: 4.6}    # ~100x
   camera_plate:  {log_lr: 3.91, fuzzy_log_lr: 1.5}   # ~50x; one misread character ~4.5x
