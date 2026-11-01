@@ -46,6 +46,8 @@ One closed-loop system. Each challenge works on its own, and each makes the othe
 
 ---
 
+> **Final detection design (owner decision, 2026-11-01).** At each gate, **two presence sensors** (IR break-beam or ultrasonic on an ESP32, ~1 m apart) detect every car entering or leaving; trigger order gives direction. A **camera** facing the lane (old phone) reads the plate on entry and exit to identify the car. Fusion pairs `gate_sensor` + `camera_plate` events within ~±8 s into one identified check-in/out. A sensor event without a readable plate still updates occupancy and raises an "identity unknown" task. The driver's phone signals are backup; NFC/QR optional; BLE beacons and the rotating gate-QR screen are dropped. This supersedes the kit table in §3.3 where they differ.
+
 ## 1. Understanding the problem
 
 ### 1.1 Context that shapes the design

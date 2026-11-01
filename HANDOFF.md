@@ -1,7 +1,7 @@
 # Handoff — current status
 
 > **Read this first** if you're a new Claude Code / Cursor session picking up the work.
-> Last updated: 2026-11-01. **Phase 1 is merged on `main`**; phase 2 is next.
+> Last updated: 2026-11-01. **Phase 1 is merged on `main`**. **Phase 2 is running** as 5 parallel worktree sessions on the owner's laptop: rhythm, ops simulator + fusion, mobile offline, dashboard evidence + evaluation, camera edge. Their branches are local `claude/feat-*-p2*` (see `git branch`), not pushed. When they finish: review, merge (order: ops → rhythm → edge → dashboard → mobile), run the checks in §6, push.
 > Repo: https://github.com/adamk-codes/GoPark · default branch `main`
 
 ## 1. What this project is (30 seconds)
@@ -17,7 +17,13 @@ Source-of-truth docs:
 - `docs/briefs/`: one brief per workstream, with phase checklists.
 - `README.md`: run commands.
 
-**Decision taken:** detection is **camera-first** (old phones as entrance plate camera + overhead spot camera), with the phone's background signals as backup. NFC/QR are optional fallbacks. The rotating gate-QR screen is optional, not required.
+**Decision taken (owner, 2026-11-01):** detection = **gate sensors + plate camera**.
+- At each gate, two presence sensors about 1 m apart (IR break-beam or ultrasonic, on an ESP32) catch every car going in or out. The order they trigger gives the direction.
+- A camera facing the lane (an old phone) reads the plate, on entry **and** exit, to say whose car it is.
+- New signal `gate_sensor` (enter/exit). Fusion pairs it with `camera_plate` within ~±8 s.
+- A sensor event with no readable plate still updates occupancy, and is flagged "identity unknown" for the attendant.
+- Phone background signals are backup. NFC/QR are optional fallbacks. BLE beacons and the rotating gate-QR screen are dropped.
+- Phase 2: the gate-sensor design was sent to the ops session (contract + fusion pairing) and the edge session (ESP32 firmware + sensor-triggered plate reading) mid-run. Check their reports to see if they included it.
 
 ## 2. Done (on `main`)
 | Area | State | Verified |
