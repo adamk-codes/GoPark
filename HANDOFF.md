@@ -1,30 +1,30 @@
 # Handoff — current status
 
 > **Read this first** if you're a new Claude Code / Cursor session picking up the work.
-> Last updated: 2026-11-01. **Phases 1 and 2 are merged and pushed on `main`.** Checks: `uv run pytest` gives **84 passed**; the dashboard builds; the mobile `tsc` passes.
+> Last updated: 2026-11-01. **Phases 1 and 2 are merged and pushed on `main`.** Phase 3 is merged too. Checks: `uv run pytest` gives **90 passed**; the dashboard builds; the mobile `tsc` passes.
 > - **Ops:**
 >   - fusion P2 (camera attribution, departures, anomaly and low-confidence alerts);
 >   - `tools/simulator` (replay + evaluate + tune), `WS /live`;
 >   - gate-sensor pairing (±8 s), tuned `config/fusion.yaml`.
 >   - Replay before tuning: 91% auto-confirm, 3% missed. Tuned on synthetic data, 94% auto-confirm and 0 false confirms (may be overfit).
 > - **Rhythm:** drift (CUSUM), relaxed habit test, isotonic calibration, remind tiers, explanations, evaluate v2. Test weeks: Hit@1 **0.718** vs B2 0.684; day-set Jaccard **0.976** vs B2 0.874.
-> - **Edge:** plate reader, spot watcher, gate-sensor-triggered plate reading, `edge/sensor_sim.py`, `edge/INTEGRATION.md`. `--trigger api` needs `GET /signals`, which ops hasn't built yet.
+> - **Edge:** plate reader, spot watcher, gate-sensor-triggered plate reading, `edge/sensor_sim.py`, `edge/INTEGRATION.md`. `--trigger api` uses `GET /signals` (built).
 > - **Dashboard:** Detection log on real evidence, resolvable alerts, `useLive`, Evaluation tab.
-> - **Mobile:** SQLite cache + outbox, offline QR check, alerts resolve/"Needs eyes". Driver confirm cards, Rewards screen, optional background geofence (P3). The confirm/rewards shapes are **assumed** until the ops contract lands. **Never run on a device.**
+> - **Mobile:** SQLite cache + outbox, offline QR check, alerts resolve/"Needs eyes". Driver confirm cards, Rewards screen, optional background geofence (P3). Uses the real confirm/rewards contract. **Never run on a device.**
 >
 > **Phase 3 merged on `main`** (90 tests pass):
 > - ops: `POST /stays/{id}/confirm` (arrived / not_me / left); `GET /users/{id}/pending_confirmations`; rewards ledger (`config/rewards.yaml`); `GET /signals` with an `after_id` cursor; simulator `--driver-confirm`; README "Integrating a gate sensor". Offline replay with 80% of drivers answering: 97% confirmed, 0 false confirms.
 > - dashboard: `uv run python -m tools.demo` (one-command scripted demo with narration), a Demo feed banner, occupancy that includes unidentified cars, `docs/DEMO.md`.
 >
-> **Next:**
-> - mobile: driver screens now use the real confirm/rewards contract (merged). Still never run on a device: test with Expo Go next.
-> - Field test on real phones and plates.
-> - Slides.
-> - Proposed, not yet approved by the owner:
->   - secure NFC tags (NTAG 424 DNA, SUN) where no camera fits;
->   - valet "tap to call your car" as the check-out;
->   - stop-the-clock billing: an untapped exit is billed to booking end;
->   - tap bonuses.
+> **Next = Challenge 1 detection** (owner priority, 2026-11-01). Tasks T1–T6 are in **`docs/briefs/C1-detection.md`**, each self-contained for any Claude Code / Cursor / cloud session. The full technique chain (why each method needs the next) is in **`docs/DETECTION.md`**.
+> 1. **T1 car-look match** (ML): CLIP zero-shot colour/body/make vs expected bookings when the plate is unreadable. Suggestion only, never auto.
+> 2. **T2 plate field test** on real Lebanese plates; replace the synthetic numbers.
+> 3. **T3 secure NFC sticker** (NTAG 424 DNA SUN) for lots without a camera.
+> 4. **T4 valet "call your car"**, stop-the-clock billing, tap bonuses.
+> 5. **T5 end-to-end gate test** with the Cursor engineer's sensors.
+> 6. **T6 mobile on a real Android phone.**
+>
+> Owner-approved direction: no camera → phone signals + secure NFC + driver tap; gate → sensors + plate camera (+ car-look). Slides come after C1.
 >
 > **The gate-sensor hardware/firmware is owned by an external engineer working in Cursor.** They POST `gate_sensor` signals per CONTRACT §6. We don't write ESP32 code.
 > Repo: https://github.com/adamk-codes/GoPark · default branch `main`
@@ -48,7 +48,7 @@ Source-of-truth docs:
 - New signal `gate_sensor` (enter/exit). Fusion pairs it with `camera_plate` within ~±8 s.
 - A sensor event with no readable plate still updates occupancy, and is flagged "identity unknown" for the attendant.
 - Phone background signals are backup. NFC/QR are optional fallbacks. BLE beacons and the rotating gate-QR screen are dropped.
-- Phase 2: the gate-sensor design was sent to the ops session (contract + fusion pairing) and the edge session (ESP32 firmware + sensor-triggered plate reading) mid-run. Check their reports to see if they included it.
+- Built: fusion pairing (ops) and sensor-triggered plate reading (edge). The ESP32 firmware belongs to the Cursor engineer; see `edge/INTEGRATION.md`.
 
 ## 2. Done (on `main`)
 | Area | State | Verified |
@@ -63,37 +63,16 @@ Source-of-truth docs:
 Checks at this point: `uv run pytest` → **54 passed**; `npm --prefix dashboard run build` ok; `apps/mobile` `npx tsc --noEmit` ok.
 
 ## 3. Known weaknesses (be honest in the demo)
-- **Rhythm exactness:** the engine predicts the next booking better than B2, but recovers exact day sets worse for several personas, e.g.:
-  - routine switcher: 0.59 vs 0.99;
-  - new user: 0.0 vs 0.9.
+- **All detection numbers are synthetic** (generator traces). The plate OCR has never seen real Lebanese plates; T2 fixes this.
+- **Fusion tuning may be overfit:** the motion weight doubled on synthetic data that has no false motion signals. Re-tune on field data.
+- **Valet and dead-phone cases are weakest:** 37% and 21% missed without a camera or scan. T1, T3 and T4 address this.
+- **Mobile has never run on a device**, and NFC and background geofence need an Expo development build (not Expo Go).
+- **Old branches:** `claude/feat-ops-p1-0776d5` is a duplicate ops implementation. **Don't merge it.**
 
-  Cause: no drift stage yet, and the habit test is too strict for short histories. **Phase 2 must fix this.**
-- **Not built yet:** calibration, reminders and tiers are still simple (no calibration stage). Also missing: the simulator (`tools/simulator/`), WebSocket `/live`, driver confirm, rewards ledger.
-- **Mobile:** still uses its own `src/pending-contract.ts` types for endpoints that now exist. Switch to the real `contract.ts` types; e.g. the booking-QR response is `{qr}` only.
-- **Detection log (dashboard):** may still use mocked evidence. Point it at the real `GET /stays/{id}/evidence`.
-- **Old branches:** `claude/feat-ops-p1-0776d5` is a duplicate ops implementation, superseded by awazzan2's work on `main`. Keep it for reference only and **don't merge it**. `origin/feat/ops-p1-continuation` is already in `main`.
+## 4. Next: Challenge 1 detection
+See `docs/briefs/C1-detection.md` (T1–T6) and `docs/DETECTION.md`. The old phase 1–3 briefs in `docs/briefs/` are done and kept for reference.
 
-## 4. Next: phase 2 (in priority order)
-1. **Rhythm:**
-   - `drift` stage (emerging/active/fading/ended + change date);
-   - relax the habit test for new users;
-   - `calibrate` (isotonic on validation weeks);
-   - `remind` (τ from precision target, tiers, timing from `created_at`);
-   - template reasons.
-
-   Target: beat B2 on Hit@1 **and** day-set recovery. Brief: `docs/briefs/P3-rhythm.md` §P2.
-2. **Simulator** `tools/simulator/`: replay `data/traces/*.jsonl` into `POST /signals` on the demo clock, then tune `config/fusion.yaml`. Brief: P2 §P2.
-3. **Camera edge** `edge/camera/`: plate reader + spot watcher posting `camera_plate` / `camera_spot`. Brief: `docs/briefs/H-hardware.md`.
-4. **Mobile:**
-   - switch to the real contract types;
-   - offline cache + outbox (`expo-sqlite`);
-   - offline QR verification with `/keys/qr`.
-
-   Brief: P1 §P2.
-5. **Dashboard:** real evidence on the Detection log; evaluation page from `metrics.json`. Brief: P4 §P2–P3.
-6. **Then phase 3:** driver confirm + rewards, `tools/demo.py` one-command demo, WebSocket `/live`.
-
-Parallel sessions: give each one its brief + the kickoff prompt in `docs/briefs/README.md`. Run them in separate worktrees; ports 8001–8004 / 5174 to avoid clashes.
+Parallel sessions: give each one a task from the C1 brief plus the kickoff prompt in `docs/briefs/README.md`. Run them in separate worktrees on ports 8001–8005.
 
 ## 5. Open decisions (ask the user)
 - iPhone driver build: needs a Mac or Apple developer account; otherwise the driver demo is Android-only.
