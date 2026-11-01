@@ -1,3 +1,5 @@
+// Defines the background geofence task at module load (TaskManager needs it before any navigation runs).
+import '../lib/geofence';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SettingsProvider } from '../lib/settings';
@@ -13,6 +15,7 @@ export default function RootLayout() {
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="settings" options={{ title: t.settings.title }} />
           <Stack.Screen name="driver" options={{ title: t.driver.title }} />
+          <Stack.Screen name="rewards" options={{ title: t.rewards.title }} />
         </Stack>
       </SyncProvider>
       <StatusBar style="dark" />

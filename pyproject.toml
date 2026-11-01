@@ -27,7 +27,6 @@ edge = [
     "ultralytics>=8.3",
     "easyocr>=1.7",
     "pillow>=10.4",
-    "requests>=2.32",
 ]
 
 [tool.uv]

@@ -160,10 +160,37 @@ Rewards (P3, `config/rewards.yaml`, ledger `points_ledger`, one row per event): 
 | `patterns.csv` | flat version | Nested fields flattened with `_` (e.g. `next_booking_at`, `reminder_tier`) |
 | `arrival_priors.json` | array of `arrival_prior` | Consumed by C1 fusion (P2) |
 | `lot_forecast.json` | array of `lot_forecast` | Consumed by the attendant "expected soon" strip + dashboard |
-| `run.json` | `{run_id, created_at, cutoff, input, model_version, params}` | |
-| `metrics.json` | free-form (P3 decides) | From `rhythm evaluate` |
+| `run.json` | `{run_id, created_at, cutoff, input, model_version, params, calibration, counts}` | `calibration`: `{x, y, n, fitted, tau, fitted_on}` (isotonic knots + reminder τ); `counts`: `users, rows, recurring, states{emerging,active,fading,ended}, reminders, priors` |
+| `metrics.json` | keys below | From `rhythm evaluate` |
 
 `runs/latest.txt` holds the newest `run_id`.
+
+**Pattern-row semantics (phase P2, `model_version` `rhythm-2.0-p2`).** Shapes are unchanged.
+- `state`: `emerging` (new routine or < 4 weeks seen), `active`, `fading` (dropped but still on), `ended` (stopped after a detected change; kept so switches can be shown). `null` for occasional / insufficient rows. Rows of one user: current routines first (strongest = primary), ended ones after; a user with only ended routines has an ended primary row.
+- `change_date`: date of the latest detected change of that routine (start for emerging, drop for fading/ended, last upward change for active, else `null`).
+- `confidence`: **calibrated** probability of `next_booking` (isotonic map fitted on the 4 weeks before the cutoff). `recurrence_prob`: posterior mean weekly rate on the routine's days (not calibrated). Ended rows: `next_booking` null, `confidence` 0.
+- `reminder.tier`: `locked_in` (active, p ≥ 0.9, or p ≥ τ with ≥ 6 booked slots in a row; `recommend` false), `emerging` (new routine, p ≥ 0.3), `at_risk` (p ≥ τ otherwise), `none`. `recommend` is true only for `at_risk` / `emerging` when the slot isn't already booked and no other reminder for that user falls within 48 h. `reminder.at`: median `created_at` lead + 30 min before the slot (fallback: 20:00 the evening before morning slots, else 2 h before), never before the cutoff day 20:00.
+- `reason`: template sentence with real counts; covers active / emerging / fading / ended / routine switch / occasional (incl. "likely within 7 days at X, ~N%") / insufficient history, plus inactivity and reminder notes.
+- `arrival_priors.p` and `lot_forecast.expected_arrivals` use calibrated probabilities; the forecast adds a non-routine base rate (bookings outside routines at that lot × weekday × hour over the last 8 weeks ÷ 8).
+
+**`metrics.json` keys** (`GET /rhythm/runs/{run_id}/evaluation`). Splits: `validation` and `test` (4 weekly cutoffs each, counted back from the last finished week); calibration and τ are fitted on `validation` only.
+| Key | Content |
+|---|---|
+| `run_id, input, end, model_version, settings{window_days, hit_tolerance_minutes}, definitions` | Context; `definitions` = plain-text metric definitions |
+| `cutoffs.{validation,test}` | ISO dates (each = last training day; predicts the next 7 days) |
+| `next_booking.{split}.{engine,B1,B2,B3}` | `hit_at_1, time_mae_min, coverage, n, slot_precision, slot_recall, slot_f1` |
+| `by_cutoff.{split}.{model}` | list of the same summary + `cutoff` |
+| `by_persona.{split}.{model}.{persona}` | `hit_at_1, n` |
+| `calibration` | `map{x,y}, fitted, fitted_on, n`, and `{validation,test}.{before,after}` = `{brier, ece, n, bins:[{lo, hi, mean_pred, observed, n}]}` |
+| `reminders` | `target_precision, tau`, `{validation,test}`: `[{tau, precision, recall, reminders}]` for τ = 0.05…0.95, `{split}_at_tau` |
+| `forecast.{engine,B2}` | `mae_per_lot_hour, rmse_per_lot_hour, bias_per_lot_hour, cells, actual_arrivals, expected_arrivals` (test weeks) |
+| `recovery.{engine,B2}`, `recovery_validation.{cutoff, engine, B2}` | `{overall, by_persona.{persona}}` = `routines, day_jaccard, exact_day_set, lot_accuracy, time_err_min, users_without_routine, false_habit_rate` (needs `truth.json`) |
+| `false_habit.{engine,B2}` | `{persona: rate, overall}` for users with no true routine (incl. `coincidence_trap`) |
+| `drift` | `cutoffs`, `{engine,B2}.summary.{started,ended}` = `events, detected, median_delay_days, mean_delay_days, median_change_date_error_days`; `{model}.events` = per-event rows; `states_at_end.{persona}.{state}` = count |
+| `ablation` | `[{variant: full|-prior|-decay|-drift|-activity|-calibration, hit_at_1, time_mae_min, slot_f1, brier, ece, tau, reminder_precision, reminder_recall, day_jaccard, false_habit_rate}]` |
+| `charts` | Chart-ready: `headline` (hit_at_1, slot_f1, brier/ece before-after, reminder_at_tau, day_jaccard, false_habit_rate), `hit_at_1_by_cutoff{cutoffs, split, series.{model}}`, `reliability{before, after}` (bins), `reminder_curve{tau, target_precision, points}`, `forecast[]`, `persona_table[]`, `drift_delay[]`, `ablation[]` |
+
+`recovery`, `false_habit`, `drift` and the recovery columns of `ablation` exist only when `truth.json` is next to the input; `ablation` is skipped with `--no-ablation`.
 
 **Rhythm API** (mounted in the same FastAPI app):
 | Method & path | Purpose | Status |
@@ -174,7 +201,7 @@ Rewards (P3, `config/rewards.yaml`, ledger `points_ledger`, one row per event): 
 | `GET /rhythm/runs/{run_id}/priors?lot_id=&date=` | Arrival priors | ✅ P0 (stub data from baseline) |
 | `GET /rhythm/runs/{run_id}/forecast?lot_id=&date=` | Lot forecast | ✅ P0 (stub data from baseline) |
 | `GET /rhythm/users/{user_id}` | Routines + booking history + weekday×hour heatmap | ✅ P0 (history + heatmap) |
-| `GET /rhythm/runs/{run_id}/evaluation` | `metrics.json` | 🟡 stub (P3) |
+| `GET /rhythm/runs/{run_id}/evaluation` | `metrics.json` (keys above) | ✅ P2 |
 | `POST /rhythm/datasets` | Upload CSV (multipart) → `{path}` | 🟡 stub (P3/P4) |
 
 `run_id` may be `latest` in any path.

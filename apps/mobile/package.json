@@ -14,9 +14,11 @@
     "expo-crypto": "~58.0.7",
     "expo-haptics": "~58.0.7",
     "expo-linking": "~58.0.15",
+    "expo-location": "~58.0.20",
     "expo-router": "~58.0.29",
     "expo-sqlite": "~58.0.15",
     "expo-status-bar": "~58.0.4",
+    "expo-task-manager": "~58.0.13",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "react-native": "0.88.1",
@@ -36,7 +38,8 @@
     "web": "expo start --web",
     "contract": "node -e \"require('fs').copyFileSync('../../contract/types.ts','src/contract.ts')\"",
     "typecheck": "tsc --noEmit",
-    "test:offline": "tsx scripts/offline-check.ts"
+    "test:offline": "tsx scripts/offline-check.ts",
+    "test:driver": "tsx scripts/driver-check.ts"
   },
   "private": true
 }
