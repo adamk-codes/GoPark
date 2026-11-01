@@ -123,13 +123,15 @@ class DiffDetector:
     @staticmethod
     def _prep(img):
         import cv2
-        return cv2.GaussianBlur(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), (7, 7), 0)
+        return cv2.GaussianBlur(img, (7, 7), 0)
 
     def changed(self, img) -> np.ndarray:
+        """Pixels whose largest per-channel difference to the reference exceeds the threshold (colour, not
+        grey: a brown car on grey tarmac has almost the same brightness)."""
         import cv2
         g = self._prep(img)
-        ref = self.ref if self.ref.shape == g.shape else cv2.resize(self.ref, g.shape[::-1])
-        return cv2.absdiff(g, ref) > self.threshold
+        ref = self.ref if self.ref.shape == g.shape else cv2.resize(self.ref, (g.shape[1], g.shape[0]))
+        return cv2.absdiff(g, ref).max(axis=2) > self.threshold
 
 
 def main(argv: list[str] | None = None) -> dict:

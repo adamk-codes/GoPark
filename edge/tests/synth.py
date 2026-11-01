@@ -196,7 +196,14 @@ def make_overhead_lot(out: Path, lot_id: str = "LAU", seed: int = 5) -> dict:
                 cv2.rectangle(img, (x0, 150), (x0 + 130, 410), color, -1)
                 cv2.rectangle(img, (x0 + 15, 200), (x0 + 115, 260), (50, 60, 70), -1)  # windscreen
         cv2.imwrite(str(out / f"frame_{k}.jpg"), img)
-    cfg = {"lot_id": lot_id, "frame_size": [W, H], "spots": spots}
+    # seq/: what the overhead camera sees over time (empty, then each state held for 6 frames)
+    (out / "seq").mkdir(exist_ok=True)
+    names = ["empty.jpg"] + [f"frame_{k}.jpg" for k in range(len(occupancy))]
+    for k, name in enumerate(names):
+        img = cv2.imread(str(out / name))
+        for j in range(6):
+            cv2.imwrite(str(out / "seq" / f"{k * 6 + j:03d}.jpg"), img)
+    cfg ={"lot_id": lot_id, "frame_size": [W, H], "spots": spots}
     (out / "spots.json").write_text(json.dumps(cfg, indent=2), encoding="utf-8")
     return {"spots": cfg, "occupancy": occupancy}
 
