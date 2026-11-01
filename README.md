@@ -1,12 +1,28 @@
 # GoPark Sense
 
-GoPark × AUB hackathon: one system for both challenges.
-- **Challenge 1:** attendant app + automatic arrival/departure detection.
-- **Challenge 2:** booking pattern engine ("Rhythm").
+GoPark × AUB hackathon. The focus is **Challenge 1: automatic arrival and departure detection, plus an attendant app**. Challenge 2 ("Rhythm", the booking-pattern engine) supports it by predicting who is about to arrive.
 
 Read these first:
 - [ARCHITECTURE_PLAN.md](ARCHITECTURE_PLAN.md) — what we're building and why.
 - [CONTRACT.md](CONTRACT.md) — the shared data formats and API every part codes against.
+
+## Challenge 1: how detection works
+
+What we install depends on the kind of lot:
+
+| Lot type | What is installed | How check-in / check-out works |
+|---|---|---|
+| **Gated lot** | **A camera at the gate**, with our ML model | The camera reads the plate on entry and exit. If the plate can't be read, the car-look model (colour, body, make) suggests which expected booking it is. The confidence is high → automatic check-in/out. Uncertain → a "Is this you? Yes / Not me" message to the driver. |
+| **Single spots** (individual bookable spaces) | **A presence sensor per spot**, no camera | The sensor sees the spot become occupied or free. The booking for that spot at that time, plus the driver's phone GPS, says who it is. A confirmation message settles any doubt. |
+| **Ungated lot** | **Nothing** | No automatic detection. The valet/attendant checks cars in and out from the attendant app (scan the booking QR, booking ID or plate) and fixes anything wrong. |
+
+The same rules apply everywhere:
+- **Phone GPS is only an early warning** ("arriving soon"). It never checks anyone in alone.
+- **Rhythm** (Challenge 2) predicts who is expected, which raises the starting confidence and fills the attendant's "expected soon" list.
+- **The valet/attendant can always override** from the app: check in, check out, walk-ins, resolve alerts. The app works offline.
+- **Every decision is explainable** in the dashboard's Detection log.
+
+Challenge 2 (Rhythm, the booking-pattern engine) learns each driver's routines and feeds these predictions; see [ARCHITECTURE_PLAN.md](ARCHITECTURE_PLAN.md).
 
 ## Run it
 
@@ -55,8 +71,8 @@ npm --prefix apps/mobile run start
 uv run pytest
 ```
 
-## Integrating a gate sensor
-A gate lane has a pair of presence sensors (IR break-beam or ultrasonic, ~1 m apart, on an ESP32). The order in which the two beams break gives the direction (A then B = `enter`, B then A = `exit`). The sensor says *a car passed*; the lane's plate camera says *who*. The full rules are in [CONTRACT.md](CONTRACT.md) §6 ("Gate presence sensor").
+## Integrating a presence sensor (API reference)
+The API also accepts presence-sensor events. A gate lane has a pair of presence sensors (IR break-beam or ultrasonic, ~1 m apart, on an ESP32). The order in which the two beams break gives the direction (A then B = `enter`, B then A = `exit`). The sensor says *a car passed*; the lane's plate camera says *who*. The full rules are in [CONTRACT.md](CONTRACT.md) §6 ("Gate presence sensor").
 
 **Send one signal per car that passes**: `POST /signals` with a JSON body, either one signal or `{"signals": [...]}` for a batch.
 

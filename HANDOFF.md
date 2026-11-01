@@ -5,7 +5,7 @@ Repository: https://github.com/adamk-codes/GoPark (default branch `main`) · Las
 ## 1. Overview
 GoPark Sense addresses both GoPark × AUB hackathon challenges as one system:
 - **Challenge 1: automatic arrival and departure detection, plus an attendant app.**
-  - Gate presence sensors and a phone-based plate camera detect every car entering and leaving.
+  - Gated lots: a gate camera with an ML model (plate + car look). Single spots: a presence sensor per spot. Ungated lots: the valet/attendant handles check-in and check-out in the app.
   - An evidence-fusion engine decides check-in and check-out.
   - Uncertain cases are confirmed by a short message to the driver, or by the attendant.
 - **Challenge 2: Rhythm, the booking-pattern engine.**
@@ -24,25 +24,19 @@ Key documents:
 
 ## 2. Detection design (Challenge 1)
 
-| # | Technique | Role |
+What we install depends on the kind of lot:
+
+| Lot type | What is installed | How check-in / check-out works |
 |---|---|---|
-| 1 | Booking + Rhythm prediction | Who is expected, where and when; the starting confidence |
-| 2 | Phone GPS + motion | Early "arriving soon" warning and supporting evidence |
-| 3 | Gate presence sensors (2 per lane, ESP32) | Every car in or out at the exact second, with direction |
-| 4 | Plate camera (Android phone at the gate) | Identifies the car; paired with the sensor event within ±8 s |
-| 5 | Car-look match (CLIP zero-shot: colour, body, make) | Suggests the booking when the plate is unreadable; never confirms alone |
-| 6 | Driver confirmation message ("Is this you? Yes / Not me") | Settles uncertain cases; a "Yes" counts only if the phone is at the lot |
-| 7 | Attendant app (QR / booking ID / plate scan, works offline) | Final fallback, walk-ins and disputes |
+| **Gated lot** | **A camera at the gate**, with our ML model | The camera reads the plate on entry and exit. If the plate can't be read, the car-look model (colour, body, make) suggests which expected booking it is. The confidence is high → automatic check-in/out. Uncertain → a "Is this you? Yes / Not me" message to the driver. |
+| **Single spots** (individual bookable spaces) | **A presence sensor per spot**, no camera | The sensor sees the spot become occupied or free. The booking for that spot at that time, plus the driver's phone GPS, says who it is. A confirmation message settles any doubt. |
+| **Ungated lot** | **Nothing** | No automatic detection. The valet/attendant checks cars in and out from the attendant app (scan the booking QR, booking ID or plate) and fixes anything wrong. |
 
-Fusion combines all the evidence into one confidence score:
-
-| Confidence | Action |
-|---|---|
-| ≥ 0.95 | Automatic check-in or check-out |
-| 0.60–0.95 | Driver confirmation |
-| < 0.60 | Attendant review |
-
-The scope is lots with a camera and sensors at the entry and exit.
+The same rules apply everywhere:
+- **Phone GPS is only an early warning** ("arriving soon"). It never checks anyone in alone.
+- **Rhythm** (Challenge 2) predicts who is expected, which raises the starting confidence and fills the attendant's "expected soon" list.
+- **The valet/attendant can always override** from the app: check in, check out, walk-ins, resolve alerts. The app works offline.
+- **Every decision is explainable** in the dashboard's Detection log.
 
 ## 3. What is built (on `main`)
 
@@ -79,7 +73,8 @@ Verification: `uv run pytest` passes (90+ tests), the dashboard builds, and the 
 | Car-look match when the plate is unreadable | Done |
 | Driver confirmation message on check-in | In progress |
 | Check-out message and bill | Planned |
-| End-to-end test with the gate sensors and phone camera; field test on real plates | In progress |
+| Field test of the gate camera on real plates | In progress |
+| Spot presence sensors for single spots | In progress |
 | Mobile app tested on Android devices | Planned |
 
 Task details: `docs/briefs/C1-detection.md` and `docs/briefs/CURSOR-phone-camera.md`.

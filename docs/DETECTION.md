@@ -1,5 +1,12 @@
 # How GoPark Sense detects arrivals and departures (Challenge 1)
 
+> **Final deployment (2026-11-01):**
+> - **Gated lots:** a gate camera with the ML model (plate + car look).
+> - **Single spots:** a presence sensor per spot, no camera.
+> - **Ungated lots:** no detection hardware; the valet/attendant checks cars in and out in the app.
+>
+> The technique chain below describes every signal the system supports.
+
 **Scope (owner decision, 2026-11-01):** lots with a **plate camera and presence sensors at the entry and exit**.
 Out of scope for now:
 - lots without an entry/exit camera;
