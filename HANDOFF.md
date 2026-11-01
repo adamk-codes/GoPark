@@ -1,16 +1,21 @@
 # Handoff — current status
 
 > **Read this first** if you're a new Claude Code / Cursor session picking up the work.
-> Last updated: 2026-11-01. **Phase 1 is merged on `main`**. **Phase 2:**
-> - Merged into **local** `main`: ops (fusion P2, simulator, WS /live, gate sensor), edge (plate reader, spot watcher), dashboard (real evidence, resolvable alerts, Evaluation tab), mobile (SQLite cache, outbox, offline QR check).
-> - **Not pushed:** the full `uv run pytest` gives 1 failure in `test_ops_simulator` and 25 setup errors (`no such column: OLD.estimated_fee`, an ordering issue between the schema trigger and the migration). The ops session is fixing this on `claude/feat-ops-p2-afe7a2`. Re-merge it, get the suite green, then push.
-> - Rhythm (`claude/feat-rhythm-p2-a66af2`: drift, calibrate, remind) is still finishing its evaluation, with uncommitted work in its worktree. Merge it when it reports.
+> Last updated: 2026-11-01. **Phases 1 and 2 are merged and pushed on `main`.** Checks: `uv run pytest` gives **84 passed**; the dashboard builds; the mobile `tsc` passes.
+> - **Ops:**
+>   - fusion P2 (camera attribution, departures, anomaly and low-confidence alerts);
+>   - `tools/simulator` (replay + evaluate + tune), `WS /live`;
+>   - gate-sensor pairing (±8 s), tuned `config/fusion.yaml`.
+>   - Replay before tuning: 91% auto-confirm, 3% missed. Tuned on synthetic data, 94% auto-confirm and 0 false confirms (may be overfit).
+> - **Rhythm:** drift (CUSUM), relaxed habit test, isotonic calibration, remind tiers, explanations, evaluate v2. Test weeks: Hit@1 **0.718** vs B2 0.684; day-set Jaccard **0.976** vs B2 0.874.
+> - **Edge:** plate reader, spot watcher, gate-sensor-triggered plate reading, `edge/sensor_sim.py`, `edge/INTEGRATION.md`. `--trigger api` needs `GET /signals`, which ops hasn't built yet.
+> - **Dashboard:** Detection log on real evidence, resolvable alerts, `useLive`, Evaluation tab.
+> - **Mobile:** SQLite cache + outbox, offline QR check, alerts resolve/"Needs eyes". Driver confirm cards, Rewards screen, optional background geofence (P3). The confirm/rewards shapes are **assumed** until the ops contract lands. **Never run on a device.**
 >
-> **Phase 3 assigned** (same sessions, own branches):
-> - ops: driver confirm + rewards API, plus the tuned fusion config;
-> - mobile: driver confirm/rewards screens and real geofence;
-> - dashboard: `tools/demo.py` one-command demo + `docs/DEMO.md`;
-> - edge: sensor-triggered plate reading, `edge/sensor_sim.py`, `edge/INTEGRATION.md`.
+> **Phase 3 in progress** (branches not merged yet):
+> - ops (`claude/feat-ops-p2-afe7a2`): `POST /stays/{id}/confirm`, `GET /users/{id}/pending_confirmations`, rewards ledger, README gate-sensor guide. After it lands, mobile swaps the assumed shapes for the real ones.
+> - dashboard (`claude/feat-dash-p2-c992b8`): `tools/demo.py` one-command demo + `docs/DEMO.md`.
+> - Still to do: `GET /signals` for the edge trigger, field test on real phones, slides.
 >
 > **The gate-sensor hardware/firmware is owned by an external engineer working in Cursor.** They POST `gate_sensor` signals per CONTRACT §6. We don't write ESP32 code.
 > Repo: https://github.com/adamk-codes/GoPark · default branch `main`
