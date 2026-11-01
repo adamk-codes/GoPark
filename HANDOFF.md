@@ -1,90 +1,90 @@
-# Handoff — current status
+# GoPark Sense: project status and handoff
 
-> **Read this first** if you're a new Claude Code / Cursor session picking up the work.
-> Last updated: 2026-11-01. **Phases 1 and 2 are merged and pushed on `main`.** Phase 3 is merged too. Checks: `uv run pytest` gives **90 passed**; the dashboard builds; the mobile `tsc` passes.
-> - **Ops:**
->   - fusion P2 (camera attribution, departures, anomaly and low-confidence alerts);
->   - `tools/simulator` (replay + evaluate + tune), `WS /live`;
->   - gate-sensor pairing (±8 s), tuned `config/fusion.yaml`.
->   - Replay before tuning: 91% auto-confirm, 3% missed. Tuned on synthetic data, 94% auto-confirm and 0 false confirms (may be overfit).
-> - **Rhythm:** drift (CUSUM), relaxed habit test, isotonic calibration, remind tiers, explanations, evaluate v2. Test weeks: Hit@1 **0.718** vs B2 0.684; day-set Jaccard **0.976** vs B2 0.874.
-> - **Edge:** plate reader, spot watcher, gate-sensor-triggered plate reading, `edge/sensor_sim.py`, `edge/INTEGRATION.md`. `--trigger api` uses `GET /signals` (built).
-> - **Dashboard:** Detection log on real evidence, resolvable alerts, `useLive`, Evaluation tab.
-> - **Mobile:** SQLite cache + outbox, offline QR check, alerts resolve/"Needs eyes". Driver confirm cards, Rewards screen, optional background geofence (P3). Uses the real confirm/rewards contract. **Never run on a device.**
->
-> **Phase 3 merged on `main`** (90 tests pass):
-> - ops: `POST /stays/{id}/confirm` (arrived / not_me / left); `GET /users/{id}/pending_confirmations`; rewards ledger (`config/rewards.yaml`); `GET /signals` with an `after_id` cursor; simulator `--driver-confirm`; README "Integrating a gate sensor". Offline replay with 80% of drivers answering: 97% confirmed, 0 false confirms.
-> - dashboard: `uv run python -m tools.demo` (one-command scripted demo with narration), a Demo feed banner, occupancy that includes unidentified cars, `docs/DEMO.md`.
->
-> **Next = Challenge 1 detection** (owner priority, 2026-11-01). Tasks are in **`docs/briefs/C1-detection.md`**; the technique chain and the driver messages are in **`docs/DETECTION.md`**.
-> - **Scope:** lots with gate sensors + a plate camera at entry and exit, plus phone GPS. The final check is a **confirmation message** to the driver ("Checked in at BDD 08:12. Is this you? Yes / Not me").
-> - **Out of scope:** NFC, and lots without an entry/exit camera. Don't build them.
->
-> | Task | What | Owner |
-> |---|---|---|
-> | T1 | Car-look match (CLIP) when the plate is unreadable; suggestion only, never auto | **awazzan2**: done, merged |
-> | T3 | Parking confirmation message ("Yes" counts only if the phone is at the lot) | **awazzan2**, after T1 |
-> | T4 | Check-out message + bill | **awazzan2**, after T3 |
-> | T5 | Phone camera + real sensors end to end, field test, gate launcher (brief: `docs/briefs/CURSOR-phone-camera.md`) | **Cursor engineer** |
-> | T2 | Plate field test on real cars | **Adam** |
-> | T6 | Mobile on a real Android phone | **Adam** |
->
-> The kickoff prompt for awazzan2 is at the top of the C1 brief. The owner's laptop is off, so the local Claude sessions are stopped. Slides come after C1.
->
-> **The gate-sensor hardware/firmware is owned by an external engineer working in Cursor.** They POST `gate_sensor` signals per CONTRACT §6. We don't write ESP32 code.
-> Repo: https://github.com/adamk-codes/GoPark · default branch `main`
+Repository: https://github.com/adamk-codes/GoPark (default branch `main`) · Last updated: 2026-11-01
 
-## 1. What this project is (30 seconds)
-One system for both GoPark × AUB hackathon challenges:
-- **C1:** attendant app + automatic arrival/departure detection.
-- **C2:** "Rhythm", the booking pattern engine.
+## 1. Overview
+GoPark Sense addresses both GoPark × AUB hackathon challenges as one system:
+- **Challenge 1: automatic arrival and departure detection, plus an attendant app.**
+  - Gate presence sensors and a phone-based plate camera detect every car entering and leaving.
+  - An evidence-fusion engine decides check-in and check-out.
+  - Uncertain cases are confirmed by a short message to the driver, or by the attendant.
+- **Challenge 2: Rhythm, the booking-pattern engine.**
+  - It learns each driver's routines from booking history and predicts upcoming arrivals.
+  - Those predictions set the starting confidence for detection and fill the attendant's "expected soon" list.
 
-C2's predictions feed C1's detection and the "expected soon" list.
+Key documents:
 
-Source-of-truth docs:
-- `ARCHITECTURE_PLAN.md`: design.
-- `CONTRACT.md`: every shared shape and endpoint.
-- `docs/briefs/`: one brief per workstream, with phase checklists.
-- `README.md`: run commands.
+| Document | Contents |
+|---|---|
+| `ARCHITECTURE_PLAN.md` | System design |
+| `CONTRACT.md` | All shared data shapes and API endpoints |
+| `docs/DETECTION.md` | Detection techniques and driver messages |
+| `docs/DEMO.md` | Five-minute demo script |
+| `README.md` | Setup and run commands |
 
-**Decision taken (owner, 2026-11-01):** detection = **gate sensors + plate camera**.
-- At each gate, two presence sensors about 1 m apart (IR break-beam or ultrasonic, on an ESP32) catch every car going in or out. The order they trigger gives the direction.
-- A camera facing the lane (an old phone) reads the plate, on entry **and** exit, to say whose car it is.
-- New signal `gate_sensor` (enter/exit). Fusion pairs it with `camera_plate` within ~±8 s.
-- A sensor event with no readable plate still updates occupancy, and is flagged "identity unknown" for the attendant.
-- Phone GPS is the early warning and backup; the final check is a confirmation message to the driver. NFC, BLE beacons and the rotating gate-QR screen are dropped (out of scope).
-- Built: fusion pairing (ops) and sensor-triggered plate reading (edge). The ESP32 firmware belongs to the Cursor engineer; see `edge/INTEGRATION.md`.
+## 2. Detection design (Challenge 1)
 
-## 2. Done (on `main`)
-| Area | State | Verified |
+| # | Technique | Role |
 |---|---|---|
-| Contract | P0 + ops P1 additions: booking QR, walk-ins, alerts with ids/resolve, stay evidence (with `direction`), gate code, QR public key | Type copies in dashboard + mobile in sync |
-| Ops API (`api/ops/`) | Scan by QR / booking ID / plate, walk-ins, check-out, Ed25519-signed booking QR, gate code, persisted alerts (30 s scheduler: overstay + fee, unconfirmed departure, no-show, upcoming), sync push/pull with cursor + conflicts, **evidence fusion** (`fusion.py`: signals → ARRIVING / CHECKED_IN / CHECKED_OUT, saved evidence), demo clock | Tests |
-| Rhythm (`rhythm/`) | Stages `clean`, `activity`, `discover`, `habit`, `predict`; several routines per user; `python -m rhythm evaluate` vs baselines B1/B2/B3 | Hit@1 **0.707** vs B2 0.684, B1 0.565, B3 0.518 (test weeks) |
-| Generator (`tools/generator/`) | 12 personas incl. switcher, fader, noisy, canceller, multi-routine, coincidence trap, new, lapsed; 2 hidden (gitignored, `--include-hidden`); capacity; `--messy`; driver traces (clean, weak GPS, underground, phone dead, contradiction, no-show) with camera signals | Tests |
-| Dashboard (`dashboard/`) | Design tokens (light/dark), ECharts; pages: Live lots (+ forecast vs actual), Detection log, Booking patterns (filters, sort, export), User drill-down (heatmap, timeline) | Builds |
-| Mobile (`apps/mobile/`) | Expo Router: Overview, Scan (camera QR + manual), Alerts, History, Driver, Settings; mocks fall back only when an endpoint returns 404/405/501 | Typecheck + Android export; **never run on a device** |
+| 1 | Booking + Rhythm prediction | Who is expected, where and when; the starting confidence |
+| 2 | Phone GPS + motion | Early "arriving soon" warning and supporting evidence |
+| 3 | Gate presence sensors (2 per lane, ESP32) | Every car in or out at the exact second, with direction |
+| 4 | Plate camera (Android phone at the gate) | Identifies the car; paired with the sensor event within ±8 s |
+| 5 | Car-look match (CLIP zero-shot: colour, body, make) | Suggests the booking when the plate is unreadable; never confirms alone |
+| 6 | Driver confirmation message ("Is this you? Yes / Not me") | Settles uncertain cases; a "Yes" counts only if the phone is at the lot |
+| 7 | Attendant app (QR / booking ID / plate scan, works offline) | Final fallback, walk-ins and disputes |
 
-Checks at this point: `uv run pytest` → **54 passed**; `npm --prefix dashboard run build` ok; `apps/mobile` `npx tsc --noEmit` ok.
+Fusion combines all the evidence into one confidence score:
 
-## 3. Known weaknesses (be honest in the demo)
-- **All detection numbers are synthetic** (generator traces). The plate OCR has never seen real Lebanese plates; T2 fixes this.
-- **Fusion tuning may be overfit:** the motion weight doubled on synthetic data that has no false motion signals. Re-tune on field data.
-- **Dead-phone and unreadable-plate cases are weakest** (21% of dead-phone cars missed in the replay). T1 + T3 address this. Valet / no-camera lots are out of scope.
-- **Mobile has never run on a device**, and remote push and background geofence need an Expo development build (not Expo Go).
-- **Old branches:** `claude/feat-ops-p1-0776d5` is a duplicate ops implementation. **Don't merge it.**
+| Confidence | Action |
+|---|---|
+| ≥ 0.95 | Automatic check-in or check-out |
+| 0.60–0.95 | Driver confirmation |
+| < 0.60 | Attendant review |
 
-## 4. Next: Challenge 1 detection
-See `docs/briefs/C1-detection.md` (T1–T6) and `docs/DETECTION.md`. The old phase 1–3 briefs in `docs/briefs/` are done and kept for reference.
+The scope is lots with a camera and sensors at the entry and exit.
 
-Parallel sessions: give each one a task from the C1 brief plus the kickoff prompt in `docs/briefs/README.md`. Run them in separate worktrees on ports 8001–8005.
+## 3. What is built (on `main`)
 
-## 5. Open decisions (ask the user)
-- iPhone driver build: needs a Mac or Apple developer account; otherwise the driver demo is Android-only.
-- Presentation length / whether a live demo is required.
-- What GoPark's lots really look like (own vs partner lots, gates, payment at exit). This affects whether cameras can be installed everywhere.
+| Area | Features |
+|---|---|
+| Ops API (`api/ops/`) | Scan by signed QR / booking ID / plate; walk-ins; check-out; evidence fusion with saved, explainable evidence; gate-sensor + plate pairing; unidentified-car handling; departures and inferred check-outs; overstay, no-show, low-confidence and anomaly alerts; driver confirm; rewards ledger; offline sync with cursor; `WS /live`; `GET /signals`; demo clock |
+| Camera edge (`edge/`) | Plate reader (Latin and Arabic-Indic digits, sensor-triggered mode, one camera for both directions); car-look match (CLIP); spot watcher; sensor simulator; integration guide (`edge/INTEGRATION.md`) |
+| Rhythm (`rhythm/`) | Routine discovery, habit test, drift detection (CUSUM), isotonic calibration, reminder tiers, plain-language explanations, evaluation against baselines |
+| Simulator (`tools/simulator/`) | Replays driver traces through the API on the demo clock; evaluates and tunes fusion |
+| Dashboard (`dashboard/`) | Live lots with forecast vs actual, Detection log (evidence per decision), alerts, booking patterns, driver drill-down, evaluation page, demo banner |
+| Mobile (`apps/mobile/`, Expo) | Attendant: overview, scan, walk-ins, alerts, history, offline cache and outbox, offline QR verification. Driver: confirmation cards, rewards, optional geofence |
+| Demo (`tools/demo.py`) | One command starts everything and replays a narrated morning |
 
-## 6. How to resume (any tool)
+Verification: `uv run pytest` passes (90+ tests), the dashboard builds, and the mobile typecheck passes.
+
+## 4. Results (synthetic data)
+
+| Measure | Result |
+|---|---|
+| Detection, 674 simulated bookings, replayed through the API | 93% confirmed automatically, 97% with driver confirmation, 0 false confirmations |
+| Rhythm, next-booking accuracy (Hit@1, test weeks) | 0.718 vs 0.684 for the best baseline |
+| Rhythm, weekly day-set match (Jaccard) | 0.976 vs 0.874 |
+
+## 5. Limitations
+- All results come from generated data. The plate reader and the car-look match have not yet been measured on real Lebanese plates and cars.
+- The fusion weights were tuned on synthetic data and should be re-tuned on field data.
+- Cars with a dead phone and an unreadable plate are the hardest case and rely on the car-look suggestion or the attendant.
+- The mobile app has been verified by typecheck and Android export only. Remote push notifications and background location need an Expo development build.
+
+## 6. Roadmap
+
+| Item | Status |
+|---|---|
+| Car-look match when the plate is unreadable | Done |
+| Driver confirmation message on check-in | In progress |
+| Check-out message and bill | Planned |
+| End-to-end test with the gate sensors and phone camera; field test on real plates | In progress |
+| Mobile app tested on Android devices | Planned |
+
+Task details: `docs/briefs/C1-detection.md` and `docs/briefs/CURSOR-phone-camera.md`.
+
+## 7. How to run
 ```bash
 git clone https://github.com/adamk-codes/GoPark.git
 ```
@@ -92,16 +92,19 @@ git clone https://github.com/adamk-codes/GoPark.git
 uv sync
 ```
 ```bash
+uv run python -m tools.demo
+```
+This one command generates the data, runs Rhythm, starts the API (:8000) and the dashboard (:5173), and replays the demo morning.
+
+Manual steps:
+```bash
 uv run python -m tools.generator --users 300 --weeks 26 --seed 42
 ```
 ```bash
 uv run python -m rhythm run
 ```
 ```bash
-uv run python -m rhythm evaluate
-```
-```bash
-uv run uvicorn api.main:app --reload --port 8000
+uv run uvicorn api.main:app --port 8000
 ```
 ```bash
 npm --prefix dashboard install
@@ -109,7 +112,7 @@ npm --prefix dashboard install
 ```bash
 npm --prefix dashboard run dev
 ```
-Mobile: `npm --prefix apps/mobile install`, put `EXPO_PUBLIC_API_URL=http://<laptop-LAN-IP>:8000` in `apps/mobile/.env`, then `npm --prefix apps/mobile run start` and scan with Expo Go.
 
-## 7. Housekeeping rule
-Before any session runs out of context it must update this file (done / in progress / next, with exact commands) and commit + push it. Never push code that breaks `main`; describe unfinished work here instead.
+Camera: `uv sync --group edge`, then see `edge/README.md`.
+
+Mobile: `npm --prefix apps/mobile install`, set `EXPO_PUBLIC_API_URL=http://<laptop-LAN-IP>:8000` in `apps/mobile/.env`, then `npm --prefix apps/mobile run start`.

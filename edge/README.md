@@ -129,7 +129,7 @@ uv run --group edge python -m edge.sensor_sim --lot-id AUB --also http://127.0.0
 
 In the sensor sim, type `e` (car in) or `x` (car out), then Enter. Measured on 8005: enter + plate →
 `CHECKED_IN` (auto). Exit through the same camera → `CHECKED_OUT` (auto). Per-frame time with the fast
-OCR was 61–91 ms mean, while other sessions were using the CPU.
+OCR was 61–91 ms mean, while other processes were using the CPU.
 
 **Overhead camera:**
 
@@ -171,8 +171,8 @@ lot (4 spots, empty reference, frame sequence). `eval_ocr` writes `edge/tests/oc
 ## Measured accuracy and speed
 
 **Preliminary.** The full `eval_ocr` run (60 plates × 3 OCR modes) did not finish: four other build
-sessions were using the same CPU. The numbers below are from smaller runs on an i5-12450H (CPU only)
-while those sessions were running, so the timings are pessimistic. Re-run `eval_ocr` on an idle laptop
+processes were using the same CPU. The numbers below are from smaller runs on an i5-12450H (CPU only)
+while those processes were running, so the timings are pessimistic. Re-run `eval_ocr` on an idle laptop
 and replace this section with its numbers.
 
 | Test | Result |

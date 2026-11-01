@@ -102,25 +102,17 @@ curl -s "http://localhost:8000/alerts?lot_id=AUB"
 ```
 Live updates: `WS /live?lot_id=AUB` pushes every stay/alert change as `{"type": "stay"|"alert", "data": {...}}`.
 
-## What works now (phase P0)
-| Part | Status |
+## Project structure
+| Folder | Contents |
 |---|---|
-| Generator | 3 personas (weekday commuter, MWF student, occasional), holidays and term breaks, `created_at`, plates, actual stays, plus 1 upcoming "live" week |
-| Rhythm | Baseline B2 (modal weekdays/time/lot) writing contract-valid patterns, arrival priors and lot forecast; CSV/JSON export |
-| API | Lots, overview with "expected soon" (bookings + habit predictions), scan by booking ID or plate (check-in/out, wrong lot, too early, expired, walk-in suggestion, double-scan guard, idempotent retries), stays, audit log, signal storage, basic offline sync replay, on-the-fly overstay/upcoming alerts, demo clock |
-| Dashboard | Live lot view (counts, spot grid, expected soon, alerts, activity, parked cars) and pattern table with export |
-| Mobile | Attendant mode: pick a lot, see counts and expected arrivals, check in/out by booking ID or plate. Driver mode is a placeholder |
+| `api/` | FastAPI backend: ops (scan, stays, evidence fusion, alerts, sync, driver confirm, rewards) and the Rhythm API |
+| `rhythm/` | Booking-pattern engine: discovery, habits, drift, calibration, reminders, evaluation |
+| `edge/` | Phone-camera software: plate reader, car-look match, spot watcher, gate-sensor simulator |
+| `dashboard/` | Operator dashboard (React + Vite) |
+| `apps/mobile/` | Attendant and driver app (Expo) |
+| `tools/` | Data generator, signal simulator, one-command demo |
+| `contract/`, `CONTRACT.md` | Shared schemas and types |
+| `config/` | Lots, fusion weights, rewards, Rhythm settings |
+| `docs/` | Detection design, demo script, task briefs |
 
-Not built yet: evidence fusion, QR signing and camera scanning, offline outbox in the app, driver mode, rewards, the full Rhythm engine, evaluation, simulator. See the phases in ARCHITECTURE_PLAN.md §10.
-
-## Workstreams (one person and one Claude Code session each)
-Full briefs and the kickoff prompt for each Claude session: [docs/briefs/](docs/briefs/README.md).
-
-| Owner | Folders | First tasks (phase P1) |
-|---|---|---|
-| P1 Mobile | `apps/mobile/` | Expo Router screens; camera QR + plate entry; overview; history; start the offline outbox (`expo-sqlite`) |
-| P2 Ops backend | `api/ops/`, `api/schema.sql`, `tools/simulator/` | Signed QR (`/keys/qr`), sync cursor + anomaly queue, persisted alerts, fusion from `config/fusion.yaml`, WebSocket `/live` |
-| P3 Rhythm | `rhythm/`, `api/rhythm_api/` | Replace `rhythm/pipeline._patterns` with the real pipeline (§4.2); `rhythm evaluate` with baselines; keep output shapes |
-| P4 Data + Dashboard | `tools/generator/`, `dashboard/` | Remaining personas (switcher, fader, noisy, canceller, coincidence trap, multi-routine, new, lapsed, 2 hidden), messy-row injector, driver traces; dashboard design + drill-down page |
-
-Rules: stay in your folders, change shapes only through a `CONTRACT.md` PR, run `uv run pytest` before merging, and merge to `main` every ~4 h.
+Project status, results and roadmap: [HANDOFF.md](HANDOFF.md).
