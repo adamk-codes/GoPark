@@ -42,6 +42,8 @@ export const api = {
   overview: (lot: string) => get<LotOverview>(`/lots/${lot}/overview`),
   stays: (lot: string, state?: string) => get<Stay[]>(`/stays?lot_id=${lot}${state ? `&state=${state}` : ''}`),
   alerts: (lot: string) => get<Alert[]>(`/alerts?lot_id=${lot}`),
+  alertsAll: () => get<Alert[]>('/alerts'),
+  auditAll: (limit = 60) => get<(AuditEntry & { lot_id?: string | null })[]>(`/audit?limit=${limit}`),
   resolveAlert: (id: number, note?: string) => post<Alert>(`/alerts/${id}/resolve`, { device_id: DASHBOARD_DEVICE, note }),
   audit: (lot: string) => get<AuditEntry[]>(`/audit?lot_id=${lot}&limit=15`),
   run: () => get<RunInfo>('/rhythm/runs/latest'),

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { dayTime, useDemoNow } from './api'
 import { getMode, setMode, type ThemeMode } from './Chart'
+import { DemoFeed } from './DemoFeed'
 import { DetectionLog } from './DetectionLog'
 import { Evaluation } from './Evaluation'
 import { LiveLots } from './LiveLots'
@@ -20,7 +21,16 @@ function parseHash(): { tab: Tab; arg: string | null; arg2: string | null } {
 export default function App() {
   const [route, setRoute] = useState(parseHash)
   const [mode, setModeState] = useState<ThemeMode>(getMode)
-  const now = useDemoNow()
+  // Demo narration banner: on with ?demo (tools/demo.py opens that URL) or the header toggle; remembered per browser.
+  const [demo, setDemo] = useState(() => {
+    if (new URLSearchParams(location.search).has('demo')) return true
+    try { return localStorage.getItem('gopark-demo') === '1' } catch { return false }
+  })
+  const toggleDemo = (on: boolean) => {
+    setDemo(on)
+    try { localStorage.setItem('gopark-demo', on ? '1' : '0') } catch { /* private window */ }
+  }
+  const now = useDemoNow(demo ? 2500 : 15000)
   const [lastUser, setLastUser] = useState<string | null>(route.tab === 'user' ? route.arg : null)
 
   useEffect(() => {
@@ -47,6 +57,7 @@ export default function App() {
           ))}
         </nav>
         <div className="top-right">
+          <button className={`button small${demo ? ' primary' : ''}`} aria-pressed={demo} onClick={() => toggleDemo(!demo)}>Demo feed</button>
           <span className="clock" title="Demo clock from the API">Demo clock <b className="num">{now ? dayTime(now) : '—'}</b></span>
           <div className="segmented" role="group" aria-label="Theme">
             {(['light', 'system', 'dark'] as ThemeMode[]).map((m) => (
@@ -56,6 +67,7 @@ export default function App() {
             ))}
           </div>
         </div>
+        {demo && <DemoFeed onClose={() => toggleDemo(false)} />}
       </header>
       {route.tab === 'lots' && <LiveLots />}
       {route.tab === 'detection' && <DetectionLog now={now} lot={route.arg} stayId={route.arg2} />}

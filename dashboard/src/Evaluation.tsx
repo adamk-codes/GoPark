@@ -318,7 +318,9 @@ const DETECTION_TILES: [key: string, label: string, kind: 'rate' | 'min' | 'coun
 const SPLITS = ['test', 'all', 'tune']
 
 function Detection({ metrics, loading }: { metrics: FusionMetrics | null; loading: boolean }) {
-  const report = metrics && isObj(metrics) ? metrics : null
+  // runs/fusion_metrics.json wraps the report as {before, after (when tuned), config_*, tuning}; older/flat shapes pass through.
+  const wrapped = metrics && isObj(metrics) ? metrics : null
+  const report = (wrapped && (isObj(wrapped.after) ? wrapped.after : isObj(wrapped.before) ? wrapped.before : wrapped)) as FusionMetrics | null
   const splits = report ? SPLITS.filter((k) => isObj(report[k])) : []
   const [split, setSplit] = useState('test')
   if (loading) return <p className="muted">Looking for fusion metrics…</p>
