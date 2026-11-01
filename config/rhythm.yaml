@@ -38,10 +38,16 @@ drift:
 predict:
   horizon_days: 14
   hit_tolerance_minutes: 60
+  inactivity_half_life_weeks: 2   # activity factor halves every 2 weeks past 2× the usual gap
+  gap_window_weeks: 8             # occasional users: booking rate over this window
+calibrate:
+  weeks: 4                   # `rhythm run` fits isotonic calibration + τ on the 4 weeks before its cutoff
 reminder:
   target_precision: 0.8
   default_threshold: 0.7
   locked_in_threshold: 0.9
+  locked_in_streak: 6        # … or p ≥ τ and this many booked routine slots in a row
+  emerging_min_p: 0.3        # emerging routines get a "cement the habit" reminder above this
   cooldown_hours: 48
   evening_before_hour: 20
   morning_cutoff_hour: 11

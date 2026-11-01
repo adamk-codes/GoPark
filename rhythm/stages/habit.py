@@ -32,7 +32,7 @@ ROUTINE_COLS = KEYS + ["days", "center", "spread", "support", "distinct_weeks", 
                        "recent_hits", "recent_slots", "mean_p", "expected_per_week", "chance_p",
                        "regime_hits", "regime_slots", "regime_rate", "regime_weeks", "recent_rate",
                        "n_days", "up_days", "up_since", "down_days", "down_since", "pre_hits", "pre_slots",
-                       "ended"]
+                       "post_hits", "post_slots", "last_slot_day", "streak", "ended"]
 
 
 def _decay(days: pd.Series, end, half_life_weeks: float, on: bool) -> np.ndarray:
@@ -166,6 +166,12 @@ def _routine_stats(cl: pd.DataFrame, t: pd.DataFrame, sel: pd.DataFrame, end: pd
     time = circ_stats(rows, KEYS).set_index(KEYS)
     reg = tt.groupby(KEYS).agg(regime_hits=("any", "sum"), regime_slots=("any", "size"), regime_from=("day", "min"),
                                regime_to=("day", "max"), own_rate=("own_rate", "first"))
+    reg["last_slot_day"] = reg["regime_to"]
+    # Streak: booked routine slots in a row, counting back from the latest one.
+    tt = tt.sort_values(KEYS + ["day"])
+    miss = (~tt["any"]).astype(int).groupby([tt[c] for c in KEYS]).cumsum()
+    last_miss = miss.groupby([tt[c] for c in KEYS]).transform("max")
+    reg["streak"] = (tt["any"] & (miss == last_miss)).groupby([tt[c] for c in KEYS]).sum()
     reg["regime_rate"] = reg["regime_hits"] / reg["regime_slots"]
     reg["regime_weeks"] = ((reg["regime_to"] - reg["regime_from"]).dt.days // 7 + 1)
     last_week = tt["day"] > (tt.groupby(KEYS)["day"].transform("max") - pd.Timedelta(weeks=h["recent_weeks"]))
@@ -176,7 +182,7 @@ def _routine_stats(cl: pd.DataFrame, t: pd.DataFrame, sel: pd.DataFrame, end: pd
     agg = sel.groupby(KEYS).agg(days=("weekday", lambda x: tuple(sorted(x))), mean_p=(p_col, "mean"),
                                 expected_per_week=(p_col, "sum"), n_days=("weekday", "size"),
                                 up_days=("up", "sum"), down_days=("down", "sum"),
-                                pre_hits=("k_pre", "sum"))
+                                pre_hits=("k_pre", "sum"), post_hits=("k", "sum"), post_slots=("trials", "sum"))
     up = sel[sel["up"]].groupby(KEYS)["regime_start"].median().rename("up_since")
     down = sel[sel["down"]].groupby(KEYS)["regime_start"].median().rename("down_since")
     pre_slots = t[~t["current"]].merge(sel[SERIES], on=SERIES).groupby(KEYS).size().rename("pre_slots")
