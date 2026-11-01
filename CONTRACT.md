@@ -90,6 +90,8 @@ Schema: `contract/schemas/signal.schema.json`.
  "payload": {"accuracy_m": 18, "rssi": -71, "plate_norm": "B123456", "space_id": "LAU-07"}}
 ```
 `user_id`, `booking_id` and `payload` fields are optional; cameras send `plate_norm` and/or `space_id` with no user.
+- **Camera attribution (P2).** `camera_plate` is matched to a booking at that lot by `payload.plate_norm` (normalized; exact, or one misread character when `payload.ocr_conf < 0.8` and only one booked plate fits), within 90 min before start to 180 min after end. `enter` prefers a booking without a stay and the nearest start, `exit` one with an open stay and the nearest end. `camera_spot` (`occupied`/`vacant`) is matched by `payload.space_id` to the booking holding that space and only adds occupancy evidence. No `booking_id` is needed from cameras.
+- **Fusion (P2, `api/ops/fusion.py`, weights in `config/fusion.yaml`).** `logit P = logit(prior) + Σ log_lr · 0.5^(age/half_life)`; prior = C2 arrival prior for the window containing now, else `default_prior`. Arrival: P ≥ 0.95 → stay `CHECKED_IN` (`in_method auto`); 0.60–0.95 → `ARRIVING`; no stay and P < 0.60 ten minutes after the first evidence → `low_confidence` alert. Strong evidence (plate, NFC, QR, attendant, driver) at the booked lot **and** another lot → `anomaly` alert (critical), never auto-confirmed. Departure uses exit-like signals after the arrival (`exit`, `unpark`, `vacant`): P ≥ 0.95 → `CHECKED_OUT` (`out_method auto`, `out_at` = first exit signal of the last burst). Strong arrival evidence at another lot closes the open stay (`out_method inferred`, `inferred: true`). Booking ended and silent → `UNCONFIRMED_DEPARTURE` (+ alert), then 30 min later an inferred checkout at the last exit-like evidence, else the booking end (delayed while the spot camera still reports `occupied`); a later confident exit corrects `out_at` (`inferred: false`).
 
 ## 7. Ops API (FastAPI, P2)
 Base URL `http://<laptop-ip>:8000`. JSON unless noted. Status column says what exists **now**.
@@ -106,7 +108,7 @@ Base URL `http://<laptop-ip>:8000`. JSON unless noted. Status column says what e
 | `POST /walk_ins` | `{lot_id, plate, device_id, client_event_id}` → `scan_result` | 🟡 P1 |
 | `GET /stays/{stay_id}/evidence` | Fused-confidence evidence timeline | 🟡 P1/P2 |
 | `GET /audit?lot_id=&limit=` | Activity history | ✅ P0 |
-| `POST /signals` | Body = signal, or `{"signals":[…]}` → `{accepted, duplicates}` | ✅ P0 stores only; fusion in P2 |
+| `POST /signals` | Body = signal, or `{"signals":[…]}` → `{accepted, duplicates}`; fuses the affected bookings (§6) | ✅ P2 |
 | `POST /sync/push` | `{device_id, events:[sync_event]}` → `{acks:[id], conflicts:[{id, reason}]}` | 🟡 stub (P2) |
 | `GET /sync/pull?lot_id=&since=` | Changed bookings/stays/alerts since a cursor | 🟡 stub (P2) |
 | `GET /alerts?lot_id=` | Open alerts | 🟡 P0 computes; P1 persists |
@@ -115,8 +117,10 @@ Base URL `http://<laptop-ip>:8000`. JSON unless noted. Status column says what e
 | `GET /users/{user_id}/rewards` | Points, grace minutes, tier | 🟡 stub (P3) |
 | `GET /keys/qr` | `{public_key}` base64url Ed25519 public key | 🟡 stub (P2) |
 | `GET /dev/gate/{lot_id}` | `{code, valid_until}` rotating gate QR (demo only) | 🟡 P1 |
-| `WS /live?lot_id=` | Pushes `{type: "stay"|"alert", data}` | 🟡 not yet (P2) |
-| `POST /dev/reset` | Reload DB from `data/` (demo only) | ✅ P0 |
+| `WS /live?lot_id=` | Pushes `{type: "stay"|"alert", data}` on every change (see below) | ✅ P2 |
+| `POST /dev/reset?prepark=` | Reload DB from `data/` (demo only); `prepark=false` skips the cars parked at 07:50 | ✅ P0 / P2 |
+| `POST /dev/tick` | Run the time-based rules now (alerts, silent departures, low confidence) → `{now, rescored}` | ✅ P2 (demo/simulator) |
+| `GET /dev/decisions?since=&until=` | Per booking (start in range): `{booking_id, lot_id, status, stay, arriving_at, confirmed_at, checked_out_at, check_out_action, alerts:[type]}` — decision times on the demo clock | ✅ P2 (simulator) |
 
 `scan_result`:
 ```json
@@ -124,6 +128,13 @@ Base URL `http://<laptop-ip>:8000`. JSON unless noted. Status column says what e
  "message": "Checked in B 123456 for AUB until 12:00",
  "booking": { …booking… } | null, "stay": { …stay… } | null, "suggest": "register_walk_in" | null}
 ```
+
+`WS /live?lot_id=` (lot optional = all lots): after connect the server sends one JSON message per stay or alert that is inserted or meaningfully changed (stay state/times/confidence; alert status/severity/message/fee), whatever caused it (scan, signals, sync, scheduler). Shape `{"type": "stay", "data": <stay as in GET /stays>}` or `{"type": "alert", "data": <alert as in GET /alerts>}`; only the latest state of an entity is sent per 0.5 s poll. Nothing is replayed on connect: load `GET /stays` / `GET /alerts` first, then apply messages. Clients may send any text (ignored); keep polling as a fallback.
+
+`runs/fusion_metrics.json` (`python -m tools.simulator evaluate [--tune]`, simulator replay of `data/traces/` vs `traces/index.csv` truth):
+- top level: `generated_at`, `mode` (`replay` through the API or `offline` pure fusion), `traces`, `bookings`, `priors` (C2 priors available), `split {method, tune, test}` (sha1(booking_id) halves; tuning only sees `tune`), `objective` (text), `config_before`, `config_after` (null without `--tune`), `tuning {changed: {path: [old, new]}, steps, objective_tune_before/after, objective_test_before/after}`, `before`, `after`.
+- `before` / `after` = `{all, tune, test, by_scenario: {clean|weak_gps|underground|phone_dead|contradiction|no_show: M}, by_lot_kind: {open|gated|underground|valet: M}}`.
+- `M`: `bookings`, `arrivals` (cars that came), `no_shows`; over arrivals: `auto_confirm_rate` (auto CHECKED_IN), `ask_driver_rate` (only ever ARRIVING), `missed_arrival_rate` (no stay), `early_confirm_rate` (confirmed > 10 min before the real arrival), `median_time_to_confirm_min` / `p90_time_to_confirm_min` (decision time − real arrival); over no-shows: `false_confirm_rate`, `false_ask_rate`; `low_confidence_alerts`, `anomaly_alerts` (bookings with one); `false_evidence_confirms` (auto-confirms that the `truth: true` signals alone would not have made); `departure {stays, auto_checkout_rate, moved_checkout_rate, inferred_checkout_rate, still_open_rate, early_checkout_rate, median_time_to_checkout_min, median_out_at_error_min, p90_out_at_error_min}`. Rates are 0–1 or null when the group is empty.
 
 `sync_event` (attendant app outbox): `{client_event_id, type: "scan"|"checkout"|"walk_in"|"resolve_alert"|"override", lot_id, observed_at, body:{…same as the online endpoint body…}}`.
 
