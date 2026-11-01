@@ -9,10 +9,11 @@ import { UserPage } from './UserPage'
 const TABS = { lots: 'Live lots', detection: 'Detection log', patterns: 'Booking patterns', user: 'User drill-down' } as const
 type Tab = keyof typeof TABS
 
-// Hash routes: #lots, #detection, #patterns, #user/U0001
-function parseHash(): { tab: Tab; arg: string | null } {
-  const [head, arg] = location.hash.slice(1).split('/')
-  return { tab: head in TABS ? (head as Tab) : 'lots', arg: arg ? decodeURIComponent(arg) : null }
+// Hash routes: #lots, #detection, #detection/AUB/S-B000123, #patterns, #user/U0001
+function parseHash(): { tab: Tab; arg: string | null; arg2: string | null } {
+  const [head, arg, arg2] = location.hash.slice(1).split('/')
+  const dec = (s?: string) => (s ? decodeURIComponent(s) : null)
+  return { tab: head in TABS ? (head as Tab) : 'lots', arg: dec(arg), arg2: dec(arg2) }
 }
 
 export default function App() {
@@ -56,7 +57,7 @@ export default function App() {
         </div>
       </header>
       {route.tab === 'lots' && <LiveLots />}
-      {route.tab === 'detection' && <DetectionLog now={now} />}
+      {route.tab === 'detection' && <DetectionLog now={now} lot={route.arg} stayId={route.arg2} />}
       {route.tab === 'patterns' && <Patterns />}
       {route.tab === 'user' && <UserPage userId={route.arg} />}
     </>

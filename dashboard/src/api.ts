@@ -1,44 +1,39 @@
 import { useEffect, useState } from 'react'
-import type { AuditEntry, Lot, LotForecast, LotOverview, PatternRow, RunInfo, SignalKind, SignalSource, Stay, UserRhythm } from './contract'
+import type {
+  Alert, AuditEntry, Lot, LotForecast, LotOverview, PatternRow, RunInfo, SignalKind, SignalSource, Stay, StayEvidence,
+  StayEvidencePoint, UserRhythm,
+} from './contract'
+import { FUSION } from './fusionConfig'
+import type { FusionMetrics, RhythmMetrics } from './metrics'
 
-export interface Alert {
-  type: string
-  severity: 'info' | 'warning' | 'critical'
-  lot_id: string
-  stay_id: string | null
-  booking_id: string | null
-  message: string
-  created_at: string
+/** Evidence for one stay, plus where it came from: the API, or the labelled mock when the endpoint failed. */
+export interface EvidenceResult {
+  ev: StayEvidence
+  mocked: boolean
+  reason?: string
 }
 
-// TODO(P2): drop these once P2's contract PR (GET /stays/{id}/evidence) lands and `npm run contract` copies it.
-// Mirrors StayEvidence / EvidenceStep on P2's branch.
-export interface EvidenceStep {
-  at: string
-  source: SignalSource
-  kind: SignalKind
-  contribution: number | null // log-likelihood added after freshness decay; null when definitive
-  p_after: number
-  definitive?: boolean
-  phase?: 'arrival' | 'departure'
-  client_event_id?: string | null
-}
-export interface StayEvidence {
-  stay_id: string
-  booking_id: string | null
-  lot_id: string
-  prior: number
-  prior_source: 'rhythm' | 'default' | 'none'
-  p: number | null
-  thresholds: { auto_confirm: number; ask_driver: number; attendant_after_min: number }
-  timeline: EvidenceStep[]
-  mocked?: boolean // dashboard-only: true when built by mockEvidence()
-}
+export const DASHBOARD_DEVICE = 'dashboard'
 
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`/api${path}`)
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`)
   return res.json() as Promise<T>
+}
+
+async function post<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`/api${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`)
+  return res.json() as Promise<T>
+}
+
+// The ops simulator writes runs/fusion_metrics.json; no route serves it yet. Rather than probing guessed URLs
+// (each miss is a console error), look the route up in FastAPI's OpenAPI document and fetch it only if it exists.
+const FUSION_ROUTE = /(fusion|simulat|detection).*metric|metric.*(fusion|simulat|detection)/i
+
+async function findFusionMetricsPath(): Promise<string | null> {
+  const doc = await get<{ paths?: Record<string, unknown> }>('/openapi.json')
+  return Object.keys(doc.paths ?? {}).find((p) => FUSION_ROUTE.test(p) && !p.includes('{')) ?? null
 }
 
 export const api = {
@@ -47,21 +42,44 @@ export const api = {
   overview: (lot: string) => get<LotOverview>(`/lots/${lot}/overview`),
   stays: (lot: string, state?: string) => get<Stay[]>(`/stays?lot_id=${lot}${state ? `&state=${state}` : ''}`),
   alerts: (lot: string) => get<Alert[]>(`/alerts?lot_id=${lot}`),
+  resolveAlert: (id: number, note?: string) => post<Alert>(`/alerts/${id}/resolve`, { device_id: DASHBOARD_DEVICE, note }),
   audit: (lot: string) => get<AuditEntry[]>(`/audit?lot_id=${lot}&limit=15`),
   run: () => get<RunInfo>('/rhythm/runs/latest'),
   patterns: (primaryOnly = true) => get<PatternRow[]>(`/rhythm/runs/latest/patterns${primaryOnly ? '?primary_only=true' : ''}`),
   forecast: (lot: string, date: string) => get<LotForecast[]>(`/rhythm/runs/latest/forecast?lot_id=${lot}&date=${date}`),
   user: (id: string) => get<UserRhythm>(`/rhythm/users/${encodeURIComponent(id)}`),
-  evidence: async (stay: Stay): Promise<StayEvidence> => {
+  evaluation: () => get<RhythmMetrics>('/rhythm/runs/latest/evaluation'),
+  /** Fusion/simulator metrics, or null while no endpoint serves them yet. */
+  fusionMetrics: async (): Promise<FusionMetrics | null> => {
     try {
-      const ev = await get<StayEvidence>(`/stays/${stay.id}/evidence`)
-      if (ev.timeline.length) return ev
-      return mockEvidence(stay, ev)
+      const path = await findFusionMetricsPath()
+      return path ? await get<FusionMetrics>(path) : null
     } catch {
-      return mockEvidence(stay)
+      return null
+    }
+  },
+  /** Real evidence; the mock only stands in when the endpoint itself fails (not when it's empty). */
+  evidence: async (stay: Stay): Promise<EvidenceResult> => {
+    try {
+      return { ev: await get<StayEvidence>(`/stays/${encodeURIComponent(stay.id)}/evidence`), mocked: false }
+    } catch (e) {
+      return { ev: mockEvidence(stay), mocked: true, reason: String(e) }
     }
   },
   exportUrl: (format: 'csv' | 'json') => `/api/rhythm/runs/latest/patterns?format=${format}`,
+}
+
+/** Lot list; retries every 5 s until the API answers, so a slow API start doesn't leave the picker empty. */
+export function useLots(): Lot[] {
+  const [lots, setLots] = useState<Lot[]>([])
+  useEffect(() => {
+    let alive = true
+    let timer: ReturnType<typeof setTimeout>
+    const load = () => api.lots().then((l) => alive && setLots(l)).catch(() => { if (alive) timer = setTimeout(load, 5000) })
+    load()
+    return () => { alive = false; clearTimeout(timer) }
+  }, [])
+  return lots
 }
 
 /** Demo clock from the API (never the browser clock). */
@@ -78,11 +96,10 @@ export function useDemoNow(pollMs = 15000): string | null {
 }
 
 // ---------------------------------------------------------------- mock evidence
-// Starting likelihood ratios from ARCHITECTURE_PLAN §3.1, so the mock tells the same story fusion will.
-const LR: Partial<Record<SignalSource, number>> = { geofence: 4, motion: 8, ble: 15, car_bt: 10, camera_plate: 50, camera_spot: 6, nfc: 100, gate_qr: 200 }
-const DEFINITIVE: SignalSource[] = ['attendant', 'booking_qr', 'driver_confirm']
+// Fallback only, used when GET /stays/{id}/evidence fails. Same maths as api/ops/fusion.py (log_lr from
+// config/fusion.yaml, definitive sources jump to ±20 log-odds), so the story matches the real thing.
 const logit = (p: number) => Math.log(p / (1 - p))
-const sigmoid = (x: number) => 1 / (1 + Math.exp(-x))
+const sigmoid = (x: number) => 1 / (1 + Math.exp(-Math.max(-40, Math.min(40, x))))
 
 function hash(s: string) {
   let h = 2166136261
@@ -90,32 +107,37 @@ function hash(s: string) {
   return h >>> 0
 }
 
-/** Plausible evidence for a stay, shaped like P2's response, until fusion steps exist. */
-export function mockEvidence(stay: Stay, base?: StayEvidence): StayEvidence {
+type Plan = [minutes: number, source: SignalSource, kind: SignalKind, freshness?: number][]
+
+export function mockEvidence(stay: Stay): StayEvidence {
   const h = hash(stay.id)
-  const prior = base?.prior ?? 0.35 + (h % 30) / 100
-  const thresholds = base?.thresholds ?? { auto_confirm: 0.95, ask_driver: 0.6, attendant_after_min: 10 }
+  const prior = 0.35 + (h % 30) / 100
   const t0 = Date.parse(stay.in_at ?? new Date(0).toISOString())
-  const plan: [number, SignalSource, SignalKind, number?][] =
+  const arrival: Plan =
     stay.in_method === 'auto' ? [[-3, 'geofence', 'enter'], [1, 'motion', 'park'], [2, 'camera_plate', 'enter']]
       : stay.in_method === 'driver' ? [[2, 'geofence', 'enter', 0.6], [6, 'driver_confirm', 'confirm']]
         : [[-1, 'geofence', 'enter', 0.4], [9, 'attendant', 'scan']]
-  let x = logit(prior)
-  const timeline: EvidenceStep[] = plan.sort((a, b) => a[0] - b[0]).map(([min, source, kind, fresh = 1]) => {
-    const at = new Date(t0 + min * 60000 + (h % 50) * 1000)
-    if (DEFINITIVE.includes(source)) {
-      x = logit(0.999)
-      return { at: localIso(at, stay.in_at), source, kind, contribution: null, p_after: 0.999, definitive: true, phase: 'arrival' }
-    }
-    const c = Math.log(LR[source] ?? 2) * fresh
-    x += c
-    return { at: localIso(at, stay.in_at), source, kind, contribution: Math.round(c * 100) / 100, p_after: sigmoid(x), phase: 'arrival' }
-  })
-  return {
-    stay_id: stay.id, booking_id: stay.booking_id, lot_id: stay.lot_id, prior,
-    prior_source: base?.prior_source ?? (stay.booking_id ? 'rhythm' : 'none'),
-    p: timeline.at(-1)?.p_after ?? null, thresholds, timeline, mocked: true,
+  const run = (plan: Plan, direction: StayEvidencePoint['direction'], start: number, p0: number) => {
+    let x = logit(p0)
+    return plan.map(([min, source, kind, fresh = 1], i): StayEvidencePoint => {
+      const lr = FUSION.logLr[source]
+      const definitive = lr == null
+      const log_lr = definitive ? 20 : lr
+      const weighted_log_lr = definitive ? 20 : lr * fresh
+      x = definitive ? 20 : x + weighted_log_lr
+      return {
+        signal_id: -(i + 1 + (direction === 'departure' ? 100 : 0)), direction,
+        observed_at: localIso(new Date(start + min * 60000 + (h % 50) * 1000), stay.in_at),
+        source, kind, log_lr, weighted_log_lr, probability: sigmoid(x),
+      }
+    })
   }
+  const evidence = run(arrival, 'arrival', t0, prior)
+  if (stay.out_at && stay.out_method === 'auto') {
+    evidence.push(...run([[-1, 'motion', 'unpark'], [0, 'camera_plate', 'exit'], [2, 'geofence', 'exit']],
+      'departure', Date.parse(stay.out_at), FUSION.defaultPrior))
+  }
+  return { stay_id: stay.id, prior, evidence }
 }
 
 /** Format a Date in the same UTC offset as a reference ISO string from the API. */
