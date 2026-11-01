@@ -1,5 +1,15 @@
 # Brief C1: detection, the current priority
 
+## Who does what (assigned 2026-11-01)
+| Who | Tasks, in order | Notes |
+|---|---|---|
+| **awazzan2** (GitHub) | **T1 → T4 → T3** | Code, starting now. The owner's laptop is off, so no local Claude sessions are running. Push a branch per task and open a PR; get `uv run pytest` green before merging. |
+| **Cursor engineer** (gate sensors) | **T5** | Follow `edge/INTEGRATION.md` and the README section "Integrating a gate sensor". Test with `edge/sensor_sim.py` first. |
+| **Adam** (owner) | **T2, T6** | Phones and real cars: plate field test, then the mobile app on an Android phone. |
+
+**Kickoff prompt for awazzan2's Claude Code / Cursor** (paste it as is):
+> Read HANDOFF.md, docs/DETECTION.md and docs/briefs/C1-detection.md. Do task T1 (car-look match) on branch `feat/c1-t1-car-look`, following the brief: contract first, tests, honest accuracy numbers. Then do T4 and T3 the same way. Before you run out of context, update HANDOFF.md (done / in progress / next) and push.
+
 Read first:
 - `HANDOFF.md`
 - `docs/DETECTION.md` (the technique chain this brief builds out)

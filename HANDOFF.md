@@ -24,6 +24,13 @@
 > 5. **T5 end-to-end gate test** with the Cursor engineer's sensors.
 > 6. **T6 mobile on a real Android phone.**
 >
+> **Assigned:**
+> - **awazzan2:** T1 → T4 → T3 (code, now).
+> - **Cursor engineer:** T5.
+> - **Adam:** T2, T6.
+>
+> The kickoff prompt is at the top of the C1 brief. The owner's laptop is off, so the local Claude sessions are stopped.
+>
 > Owner-approved direction: no camera → phone signals + secure NFC + driver tap; gate → sensors + plate camera (+ car-look). Slides come after C1.
 >
 > **The gate-sensor hardware/firmware is owned by an external engineer working in Cursor.** They POST `gate_sensor` signals per CONTRACT §6. We don't write ESP32 code.
