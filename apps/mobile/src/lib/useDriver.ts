@@ -1,37 +1,41 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ConfirmAnswer, PendingConfirmation } from '../api';
+import type { ConfirmAnswer, ConfirmResult, PendingConfirmation } from '../contract';
 import { clockFrom, demoNowMs, PHONE_CLOCK } from '../core/clock';
-import type { OutboxState } from '../core/requests';
+import type { DoneRequest, OutboxState } from '../core/requests';
 import { driverOutbox, flushDriver, loadDriver, queueConfirm, saveDriver, type DriverConfig } from './driver';
 import { useApp } from './settings';
 
 const POLL_MS = 15_000;
-const PROMPTS_KEY = 'gopark.driver.prompts.v1'; // last confirmations fetched + those answered on this phone
+const PROMPTS_KEY = 'gopark.driver.prompts.v2'; // last confirmations fetched + those answered on this phone
 
 interface Prompts {
   items: PendingConfirmation[];
-  answered: string[]; // `${stay_id}|${question}`
-  mocked: boolean;
+  answered: string[]; // promptKey
 }
 
-export const promptKey = (p: PendingConfirmation) => `${p.stay_id}|${p.question}`;
+export const promptKey = (p: PendingConfirmation) => `${p.stay.id}|${p.question}`;
+
+// A delivered confirm with the server's answer (points_awarded etc.).
+export type ConfirmDone = DoneRequest & { response: ConfirmResult };
+const isConfirmDone = (d: DoneRequest): d is ConfirmDone =>
+  d.kind === 'confirm' && !!d.response && typeof d.response === 'object' && 'result' in d.response;
 
 // Driver screens' state: config mirrored for the background task, the confirm prompts and the outbox.
 // Answers are queued before they are sent, so a tap never waits on the network.
 export function useDriver() {
   const { api, settings } = useApp();
   const [cfg, setCfg] = useState<DriverConfig | null>(null);
-  const [prompts, setPrompts] = useState<Prompts>({ items: [], answered: [], mocked: false });
-  const [outbox, setOutbox] = useState<OutboxState>({ pending: [], failed: [], online: null });
+  const [prompts, setPrompts] = useState<Prompts>({ items: [], answered: [] });
+  const [outbox, setOutbox] = useState<OutboxState>({ pending: [], failed: [], done: [], online: null });
   const [error, setError] = useState<string | null>(null);
   const cfgRef = useRef<DriverConfig | null>(null);
   cfgRef.current = cfg;
 
   const base = useCallback((): DriverConfig => ({ apiUrl: settings.apiUrl, deviceId: settings.deviceId,
-    userId: settings.driverUserId, devMocks: settings.devMocks, clock: PHONE_CLOCK, bookings: [], lots: [],
-    sensing: false }), [settings.apiUrl, settings.deviceId, settings.driverUserId, settings.devMocks]);
+    userId: settings.driverUserId, clock: PHONE_CLOCK, bookings: [], lots: [], sensing: false }),
+  [settings.apiUrl, settings.deviceId, settings.driverUserId]);
 
   const update = useCallback(async (patch: Partial<DriverConfig>) => {
     const next = await saveDriver(patch, cfgRef.current ?? base());
@@ -46,10 +50,10 @@ export function useDriver() {
       const raw = await AsyncStorage.getItem(PROMPTS_KEY).catch(() => null);
       if (raw) setPrompts(JSON.parse(raw));
       setOutbox(await driverOutbox.state());
-      setCfg(await saveDriver({ apiUrl: settings.apiUrl, deviceId: settings.deviceId, userId: settings.driverUserId,
-        devMocks: settings.devMocks }, saved ?? base()));
+      setCfg(await saveDriver({ apiUrl: settings.apiUrl, deviceId: settings.deviceId, userId: settings.driverUserId },
+        saved ?? base()));
     })().catch((e) => setError(String(e)));
-  }, [settings.apiUrl, settings.deviceId, settings.driverUserId, settings.devMocks, base]);
+  }, [settings.apiUrl, settings.deviceId, settings.driverUserId, base]);
 
   const savePrompts = useCallback((p: Prompts) => {
     setPrompts(p);
@@ -65,11 +69,11 @@ export function useDriver() {
       const [health, lots] = await Promise.all([api.health(), api.lots()]);
       await update({ clock: clockFrom(health.now), lots: lots.map((l) => ({ id: l.id, name: l.name,
         lat: l.center_lat, lng: l.center_lng, radius_m: l.radius_m })) });
-      const res = await api.pendingConfirmations(c.userId);
+      const items = await api.pendingConfirmations(c.userId);
       // Forget local answers the server no longer asks about; keep hiding the ones it still lists until synced.
-      const keys = new Set(res.data.map(promptKey));
+      const keys = new Set(items.map(promptKey));
       setPrompts((prev) => {
-        const next = { items: res.data, answered: prev.answered.filter((k) => keys.has(k)), mocked: res.mocked };
+        const next = { items, answered: prev.answered.filter((k) => keys.has(k)) };
         AsyncStorage.setItem(PROMPTS_KEY, JSON.stringify(next)).catch(() => undefined);
         return next;
       });
@@ -96,16 +100,16 @@ export function useDriver() {
     if (!c) return;
     savePrompts({ ...prompts, answered: [...prompts.answered, promptKey(p)] }); // hide at once
     if (!a) return; // "Still parked": nothing to tell the server
-    setOutbox(await queueConfirm(c, p.stay_id, a, label));
+    setOutbox(await queueConfirm(c, p.stay.id, a, label));
   }, [prompts, savePrompts]);
 
-  const dismissFailed = useCallback(async (id: string) => {
-    await driverOutbox.dismissFailed(id);
+  const dismiss = useCallback(async (id: string) => {
+    await driverOutbox.dismiss(id);
     setOutbox(await driverOutbox.state());
   }, []);
 
   const open = prompts.items.filter((p) => !prompts.answered.includes(promptKey(p)));
   const nowMs = demoNowMs(cfg?.clock ?? PHONE_CLOCK);
-  return { cfg, update, prompts: open, promptsMocked: prompts.mocked, outbox, error, refresh, answer, dismissFailed,
-    nowMs };
+  return { cfg, update, prompts: open, outbox, results: outbox.done.filter(isConfirmDone), error, refresh, answer,
+    dismiss, nowMs };
 }

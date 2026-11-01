@@ -1,13 +1,12 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { createApi, DEFAULT_API_URL, DEFAULT_DEV_MOCKS, type Api } from '../api';
+import { createApi, DEFAULT_API_URL, type Api } from '../api';
 import { newDeviceId } from './ids';
 
 export interface Settings {
   apiUrl: string;
   lotId: string;
   deviceId: string;
-  devMocks: boolean; // dev only: stub endpoints answer with mocks
   driverUserId: string;
 }
 
@@ -23,7 +22,7 @@ interface AppCtx {
 const Ctx = createContext<AppCtx | null>(null);
 
 function defaults(): Settings {
-  return { apiUrl: DEFAULT_API_URL, lotId: 'AUB', deviceId: newDeviceId(), devMocks: DEFAULT_DEV_MOCKS,
+  return { apiUrl: DEFAULT_API_URL, lotId: 'AUB', deviceId: newDeviceId(),
     driverUserId: 'U0001' };
 }
 
@@ -36,8 +35,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       try {
         const raw = await AsyncStorage.getItem(KEY);
         if (raw) {
-          // `mockPending` was the phase-1 flag (on by default); it no longer turns mocks on.
-          const { mockPending: _old, ...saved } = JSON.parse(raw);
+          // Mock flags from earlier phases (mockPending, devMocks) no longer exist: drop them.
+          const { mockPending: _p1, devMocks: _p2, ...saved } = JSON.parse(raw);
           setSettings((s) => ({ ...s, ...saved }));
         } else {
           // First launch: keep the generated device ID for good.
@@ -60,8 +59,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const api = useMemo(
-    () => createApi({ baseUrl: settings.apiUrl, deviceId: settings.deviceId, devMocks: settings.devMocks }),
-    [settings.apiUrl, settings.deviceId, settings.devMocks],
+    () => createApi({ baseUrl: settings.apiUrl, deviceId: settings.deviceId }),
+    [settings.apiUrl, settings.deviceId],
   );
 
   const value = useMemo(() => ({ ready, settings, update, api }), [ready, settings, update, api]);

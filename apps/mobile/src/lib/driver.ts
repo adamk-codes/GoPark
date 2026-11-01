@@ -1,7 +1,7 @@
 // Driver-side state shared by the Driver screens and the background geofence task. The task runs with no React
 // mounted, so everything it needs (API URL, user, demo clock, the driver's bookings) lives in AsyncStorage.
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { ConfirmAnswer } from '../api';
+import type { ConfirmAnswer, ConfirmRequest } from '../contract';
 import { demoNowIso, demoNowMs, PHONE_CLOCK, type DemoClock } from '../core/clock';
 import { geofenceSignal, type DriverBooking } from '../core/driver';
 import { RequestOutbox, type KV, type OutboxState, type Send } from '../core/requests';
@@ -21,7 +21,6 @@ export interface DriverConfig {
   apiUrl: string;
   deviceId: string;
   userId: string;
-  devMocks: boolean;
   clock: DemoClock;
   bookings: DriverBooking[];
   lots: DriverLot[];
@@ -63,15 +62,16 @@ export function sender(apiUrl: string, timeoutMs = 8000): Send {
 }
 
 export function flushDriver(cfg: DriverConfig): Promise<OutboxState> {
-  return driverOutbox.flush(sender(cfg.apiUrl), { devMocks: cfg.devMocks });
+  return driverOutbox.flush(sender(cfg.apiUrl));
 }
 
 // One-tap answer to "Did you just arrive?" / "Did you leave?". Queued first, so it survives no signal.
 export async function queueConfirm(cfg: DriverConfig, stayId: string, answer: ConfirmAnswer, label: string) {
   const id = uuidv7();
   const observed = demoNowIso(cfg.clock ?? PHONE_CLOCK);
+  const body: ConfirmRequest = { device_id: cfg.deviceId, client_event_id: id, answer, observed_at: observed };
   await driverOutbox.enqueue({ id, kind: 'confirm', path: `/stays/${encodeURIComponent(stayId)}/confirm`,
-    body: { device_id: cfg.deviceId, client_event_id: id, answer, observed_at: observed }, label, queuedAt: observed });
+    body, label, queuedAt: observed });
   return flushDriver(cfg);
 }
 
@@ -82,7 +82,7 @@ export async function queueGeofence(cfg: DriverConfig, lotId: string, kind: 'ent
   const signal = geofenceSignal({ id, deviceId: cfg.deviceId, userId: cfg.userId, lotId, kind,
     observedAt: demoNowIso(clock), nowMs: demoNowMs(clock), bookings: cfg.bookings, radiusM });
   if (!signal) return null;
-  await driverOutbox.enqueue({ id, kind: 'signal', path: '/signals', body: signal as unknown as Record<string, unknown>,
+  await driverOutbox.enqueue({ id, kind: 'signal', path: '/signals', body: signal,
     label: `${kind === 'enter' ? 'Entered' : 'Left'} ${lotId} (${signal.booking_id})`, queuedAt: signal.observed_at });
   return flushDriver(cfg);
 }
