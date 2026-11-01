@@ -1,16 +1,16 @@
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { RefreshControl, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
-import type { PendingConfirmation } from '../api';
 import { Badge, Button, Card, ErrorLine, Muted, Section, s } from '../components/ui';
 import { peekBookingQr } from '../core/qr';
+import type { PendingConfirmation } from '../contract';
 import type { DriverBooking } from '../core/driver';
 import { errorText, hhmm } from '../lib/format';
 import { isSensing, startSensing, stopSensing, sensingSupport, type SensingSupport } from '../lib/geofence';
 import { useApp } from '../lib/settings';
-import { useDriver } from '../lib/useDriver';
+import { useDriver, type ConfirmDone } from '../lib/useDriver';
 import { t } from '../strings';
-import { c } from '../theme';
+import { c, toneColors, type Tone } from '../theme';
 
 // Driver mode: one-tap confirm when the server isn't sure ("Did you just arrive?"), my bookings with their
 // signed QR, and optional background arrival sensing.
@@ -106,8 +106,9 @@ export default function Driver() {
       {d.error && !d.prompts.length && <Muted>{t.driver.offlinePrompts}</Muted>}
 
       {d.prompts.length > 0 && <Section title={t.driver.confirmTitle} />}
-      {d.prompts.map((p) => <ConfirmCard key={`${p.stay_id}|${p.question}`} p={p} lot={lotName(p.lot_id)}
-        mocked={d.promptsMocked} onAnswer={d.answer} />)}
+      {d.results.slice(0, 3).map((r) => <ResultCard key={r.id} r={r} onDismiss={() => d.dismiss(r.id)} />)}
+      {d.prompts.map((p) => <ConfirmCard key={`${p.stay.id}|${p.question}`} p={p} lot={lotName(p.booking.location_id)}
+        onAnswer={d.answer} />)}
 
       {pending.length > 0 && (
         <Card>
@@ -119,7 +120,7 @@ export default function Driver() {
         <Card key={f.id} style={{ borderStartWidth: 5, borderStartColor: c.bad }}>
           <Text style={st.q}>{f.label}</Text>
           <Text style={{ color: c.bad, fontWeight: '700' }}>{t.driver.refused(f.status, f.reason)}</Text>
-          <Button kind="secondary" label={t.sync.dismiss} onPress={() => d.dismissFailed(f.id)} />
+          <Button kind="secondary" label={t.sync.dismiss} onPress={() => d.dismiss(f.id)} />
         </Card>
       ))}
 
@@ -162,13 +163,15 @@ export default function Driver() {
   );
 }
 
-function ConfirmCard({ p, lot, mocked, onAnswer }: { p: PendingConfirmation; lot: string; mocked: boolean;
+function ConfirmCard({ p, lot, onAnswer }: { p: PendingConfirmation; lot: string;
   onAnswer: ReturnType<typeof useDriver>['answer'] }) {
-  const arrival = p.question === 'arrival';
+  const arrival = p.question === 'arrived';
+  const b = p.booking;
+  const sub = [b.plate, `${hhmm(b.start_time)}–${hhmm(b.end_time)}`, arrival && p.p != null && t.driver.seenWith(p.p)];
   return (
     <Card style={{ borderStartWidth: 5, borderStartColor: c.brand }}>
       <Text style={st.q}>{arrival ? t.driver.didArrive(lot) : t.driver.didLeave(lot)}</Text>
-      <Muted>{[p.booking_id, p.asked_at && hhmm(p.asked_at), mocked && t.common.mock].filter(Boolean).join(' · ')}</Muted>
+      <Muted>{sub.filter(Boolean).join(' · ')}</Muted>
       <View style={s.row}>
         {arrival ? (
           <>
@@ -182,6 +185,28 @@ function ConfirmCard({ p, lot, mocked, onAnswer }: { p: PendingConfirmation; lot
           </>
         )}
       </View>
+    </Card>
+  );
+}
+
+const resultTone: Record<ConfirmDone['response']['result'], Tone> = {
+  checked_in: 'ok', checked_out: 'ok', rejected: 'info', disputed: 'warn', already: 'info',
+};
+
+// What the server made of an answer, with the points it earned.
+function ResultCard({ r, onDismiss }: { r: ConfirmDone; onDismiss: () => void }) {
+  const tone = toneColors[resultTone[r.response.result] ?? 'info'];
+  const pts = r.response.points_awarded;
+  return (
+    <Card style={{ borderStartWidth: 5, borderStartColor: tone.fg, backgroundColor: tone.bg }}>
+      <View style={s.row}>
+        <Text style={[st.q, s.flex]}>{r.label}</Text>
+        {pts > 0 && <Badge label={t.driver.pointsAwarded(pts)} fg={c.ok} bg={c.okSoft} />}
+      </View>
+      <Text style={{ color: c.text, fontSize: 16 }}>{r.response.message}</Text>
+      {pts === 0 && (r.response.result === 'checked_in' || r.response.result === 'checked_out')
+        && <Muted>{t.driver.noPoints}</Muted>}
+      <Button kind="secondary" label={t.driver.ok} onPress={onDismiss} />
     </Card>
   );
 }

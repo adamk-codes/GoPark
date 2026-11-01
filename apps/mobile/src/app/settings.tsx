@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ScrollView, Pressable, Switch, Text, TextInput, View } from 'react-native';
+import { ScrollView, Pressable, Text, TextInput, View } from 'react-native';
 import { createApi } from '../api';
-import { Button, Card, ErrorLine, Muted, s } from '../components/ui';
+import { Button, ErrorLine, Muted, s } from '../components/ui';
 import type { Lot } from '../contract';
 import { errorText, hhmm } from '../lib/format';
 import { newDeviceId } from '../lib/ids';
@@ -20,8 +20,8 @@ export default function SettingsScreen() {
 
   // Test against the URL being typed, before it is saved.
   const draftApi = useMemo(
-    () => createApi({ baseUrl: apiUrl.trim(), deviceId, devMocks: settings.devMocks, timeoutMs: 5000 }),
-    [apiUrl, deviceId, settings.devMocks],
+    () => createApi({ baseUrl: apiUrl.trim(), deviceId, timeoutMs: 5000 }),
+    [apiUrl, deviceId],
   );
 
   const test = async () => {
@@ -86,15 +86,6 @@ export default function SettingsScreen() {
       </View>
 
       <Button big label={t.common.save} onPress={save} disabled={!dirty} />
-
-      <Card>
-        <View style={s.row}>
-          <Text style={[s.label, s.flex]}>{t.settings.mocks}</Text>
-          <Switch value={settings.devMocks} onValueChange={(v) => update({ devMocks: v })}
-            trackColor={{ true: c.brand }} />
-        </View>
-        <Muted>{settings.devMocks ? t.settings.mocksOn : t.settings.mocksOff}</Muted>
-      </Card>
     </ScrollView>
   );
 }

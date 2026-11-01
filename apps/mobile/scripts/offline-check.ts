@@ -27,7 +27,7 @@ function check(name: string, ok: boolean, detail = '') {
 const b64urlJson = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64url');
 
 async function main() {
-  const api = createApi({ baseUrl: BASE, deviceId: 'dev-offline-check', devMocks: false });
+  const api = createApi({ baseUrl: BASE, deviceId: 'dev-offline-check' });
   await fetch(`${BASE}/dev/reset`, { method: 'POST' });
   const health = await api.health();
   const now = Date.parse(health.now);
@@ -75,7 +75,7 @@ async function main() {
   check('cache filled from /sync/pull', engine.view().bookings.length > 0 && engine.qrKey() === key,
     `${engine.view().bookings.length} bookings`);
 
-  engine.setApi(createApi({ baseUrl: DEAD, deviceId: 'dev-offline-check', devMocks: false, timeoutMs: 1000 }));
+  engine.setApi(createApi({ baseUrl: DEAD, deviceId: 'dev-offline-check', timeoutMs: 1000 }));
   const qr2 = (await api.bookingQr(ready[1].booking_id)).qr;
   const a1 = engine.scan({ qr });
   const a2 = engine.scan({ qr: qr2 });
