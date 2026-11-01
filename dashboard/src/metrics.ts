@@ -57,6 +57,8 @@ export interface FusionScore {
 
 /** runs/fusion_metrics.json: {all, tune, test, by_scenario, by_lot_kind}. A flat FusionScore is accepted too. */
 export interface FusionMetrics {
+  before?: FusionMetrics
+  after?: FusionMetrics | null
   all?: FusionScore
   tune?: FusionScore
   test?: FusionScore

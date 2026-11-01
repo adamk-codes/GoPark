@@ -12,6 +12,13 @@ Read these first:
 
 Needs Python 3.12+ with [uv](https://docs.astral.sh/uv/) and Node 22+.
 
+**One-command demo** (data, Rhythm, API on :8000, dashboard on :5173, then a scripted morning with narration; script in [docs/DEMO.md](docs/DEMO.md)):
+```bash
+uv run python -m tools.demo
+```
+
+Or step by step:
+
 ```bash
 uv sync
 ```

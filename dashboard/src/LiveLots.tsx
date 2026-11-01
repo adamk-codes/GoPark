@@ -23,7 +23,9 @@ export function LiveLots() {
     return () => { alive = false }
   }, [lot, today])
 
-  const parked = stays.filter((s) => s.state === 'CHECKED_IN' || s.state === 'OVERSTAY')
+  const parked = stays.filter((s) => s.state === 'CHECKED_IN' || s.state === 'OVERSTAY' || s.state === 'UNCONFIRMED_DEPARTURE')
+  // Booking-less stays the gate sensor created (G-…): counted in occupancy until someone identifies the car.
+  const unidentified = parked.filter((s) => s.booking_id === null && s.id.startsWith('G-'))
   const todays = today ? stays.filter((s) => s.in_at && isoDate(s.in_at) === today) : []
   const byMethod = METHODS.map((m) => [m, todays.filter((s) => s.in_method === m).length] as const)
 
@@ -43,7 +45,8 @@ export function LiveLots() {
       {ov && (
         <>
           <div className="tiles">
-            <Tile label="Occupied" value={ov.counts.occupied} of={ov.counts.capacity} tone="occupied" />
+            <Tile label="Occupied" value={ov.counts.occupied} of={ov.counts.capacity} tone="occupied"
+              sub={unidentified.length > 0 ? `incl. ${unidentified.length} unidentified (gate sensor)` : 'all cars identified'} />
             <Tile label="Reserved (next hour)" value={ov.counts.reserved} tone="reserved" />
             <Tile label="Free" value={ov.counts.free} tone="free" />
             <div className="tile accent">
@@ -100,7 +103,7 @@ export function LiveLots() {
                 <tbody>
                   {parked.map((s) => (
                     <tr key={s.id}>
-                      <td><a href={`#detection/${s.lot_id}/${encodeURIComponent(s.id)}`} title="How this car was detected">{s.plate_norm ?? s.id}</a></td><td>{s.booking_id ?? 'walk-in'}</td><td className="num">{hhmm(s.in_at)}</td>
+                      <td><a href={`#detection/${s.lot_id}/${encodeURIComponent(s.id)}`} title="How this car was detected">{s.plate_norm ?? s.id}</a></td><td>{s.booking_id ?? (s.id.startsWith('G-') ? <span className="pill warning">unidentified</span> : 'walk-in')}</td><td className="num">{hhmm(s.in_at)}</td>
                       <td>{s.in_method ? <span className={`pill ${s.in_method}`}>{s.in_method}</span> : '—'}</td>
                       <td className="num">{s.in_conf != null ? pct(s.in_conf) : '—'}</td>
                     </tr>
@@ -157,11 +160,12 @@ function ForecastCard({ forecast, stays, now }: { forecast: LotForecast[] | null
   )
 }
 
-function Tile({ label, value, of, tone }: { label: string; value: number; of?: number; tone: string }) {
+function Tile({ label, value, of, tone, sub }: { label: string; value: number; of?: number; tone: string; sub?: string }) {
   return (
     <div className={`tile ${tone}`}>
       <span className="tile-label">{label}</span>
       <span className="tile-value">{value}{of != null && <small> / {of}</small>}</span>
+      {sub && <span className="tile-sub">{sub}</span>}
     </div>
   )
 }
