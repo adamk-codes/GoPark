@@ -12,10 +12,19 @@
 > - **Dashboard:** Detection log on real evidence, resolvable alerts, `useLive`, Evaluation tab.
 > - **Mobile:** SQLite cache + outbox, offline QR check, alerts resolve/"Needs eyes". Driver confirm cards, Rewards screen, optional background geofence (P3). The confirm/rewards shapes are **assumed** until the ops contract lands. **Never run on a device.**
 >
-> **Phase 3 in progress** (branches not merged yet):
-> - ops (`claude/feat-ops-p2-afe7a2`): `POST /stays/{id}/confirm`, `GET /users/{id}/pending_confirmations`, rewards ledger, README gate-sensor guide. After it lands, mobile swaps the assumed shapes for the real ones.
-> - dashboard (`claude/feat-dash-p2-c992b8`): `tools/demo.py` one-command demo + `docs/DEMO.md`.
-> - Still to do: `GET /signals` for the edge trigger, field test on real phones, slides.
+> **Phase 3 merged on `main`** (90 tests pass):
+> - ops: `POST /stays/{id}/confirm` (arrived / not_me / left); `GET /users/{id}/pending_confirmations`; rewards ledger (`config/rewards.yaml`); `GET /signals` with an `after_id` cursor; simulator `--driver-confirm`; README "Integrating a gate sensor". Offline replay with 80% of drivers answering: 97% confirmed, 0 false confirms.
+> - dashboard: `uv run python -m tools.demo` (one-command scripted demo with narration), a Demo feed banner, occupancy that includes unidentified cars, `docs/DEMO.md`.
+>
+> **Next:**
+> - mobile: switch `driver.tsx` / `api.ts` from the assumed shapes to the contract `Rewards`, `ConfirmResult` and `PendingConfirmation` (in progress).
+> - Field test on real phones and plates.
+> - Slides.
+> - Proposed, not yet approved by the owner:
+>   - secure NFC tags (NTAG 424 DNA, SUN) where no camera fits;
+>   - valet "tap to call your car" as the check-out;
+>   - stop-the-clock billing: an untapped exit is billed to booking end;
+>   - tap bonuses.
 >
 > **The gate-sensor hardware/firmware is owned by an external engineer working in Cursor.** They POST `gate_sensor` signals per CONTRACT §6. We don't write ESP32 code.
 > Repo: https://github.com/adamk-codes/GoPark · default branch `main`
