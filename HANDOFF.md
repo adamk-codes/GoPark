@@ -52,7 +52,7 @@ Source-of-truth docs:
 - A camera facing the lane (an old phone) reads the plate, on entry **and** exit, to say whose car it is.
 - New signal `gate_sensor` (enter/exit). Fusion pairs it with `camera_plate` within ~±8 s.
 - A sensor event with no readable plate still updates occupancy, and is flagged "identity unknown" for the attendant.
-- Phone background signals are backup. NFC/QR are optional fallbacks. BLE beacons and the rotating gate-QR screen are dropped.
+- Phone GPS is the early warning and backup; the final check is a confirmation message to the driver. NFC, BLE beacons and the rotating gate-QR screen are dropped (out of scope).
 - Built: fusion pairing (ops) and sensor-triggered plate reading (edge). The ESP32 firmware belongs to the Cursor engineer; see `edge/INTEGRATION.md`.
 
 ## 2. Done (on `main`)
