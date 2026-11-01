@@ -1,91 +1,192 @@
-import { useState } from 'react';
-import { ScrollView, Text, TextInput, View } from 'react-native';
-import { Button, Card, ErrorLine, Muted, s } from '../components/ui';
-import { errorText } from '../lib/format';
+import { router } from 'expo-router';
+import { useEffect, useState } from 'react';
+import { RefreshControl, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import type { PendingConfirmation } from '../api';
+import { Badge, Button, Card, ErrorLine, Muted, Section, s } from '../components/ui';
+import { peekBookingQr } from '../core/qr';
+import type { DriverBooking } from '../core/driver';
+import { errorText, hhmm } from '../lib/format';
+import { isSensing, startSensing, stopSensing, sensingSupport, type SensingSupport } from '../lib/geofence';
 import { useApp } from '../lib/settings';
-import type { Rewards } from '../api';
-import type { BookingQr } from '../contract';
+import { useDriver } from '../lib/useDriver';
 import { t } from '../strings';
 import { c } from '../theme';
 
-// Phase P1 preview of driver mode. P3 adds the rendered QR code, "On my way" and one-tap confirm.
+// Driver mode: one-tap confirm when the server isn't sure ("Did you just arrive?"), my bookings with their
+// signed QR, and optional background arrival sensing.
 export default function Driver() {
-  const { api, settings, update } = useApp();
+  const { api, settings, update: updateSettings } = useApp();
+  const d = useDriver();
   const [userId, setUserId] = useState(settings.driverUserId);
   const [bookingId, setBookingId] = useState('');
-  const [rewards, setRewards] = useState<{ data: Rewards; mocked: boolean } | null>(null);
-  const [qr, setQr] = useState<BookingQr | null>(null);
+  const [qrs, setQrs] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState<'rewards' | 'qr' | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [support, setSupport] = useState<SensingSupport | null>(null);
+  const [sensing, setSensing] = useState(false);
+  const [sensingNote, setSensingNote] = useState<string | null>(null);
+  const lotName = (id: string) => d.cfg?.lots.find((l) => l.id === id)?.name ?? id;
 
-  const loadRewards = async () => {
-    setBusy('rewards');
+  useEffect(() => {
+    sensingSupport().then(setSupport);
+    isSensing().then(setSensing);
+  }, []);
+
+  const pull = async () => {
+    setRefreshing(true);
+    await d.refresh();
+    setRefreshing(false);
+  };
+
+  const saveUser = () => updateSettings({ driverUserId: userId.trim().toUpperCase() });
+
+  // Adding a booking fetches its signed QR; lot and times come from the QR payload.
+  const addBooking = async () => {
+    if (!d.cfg) return;
+    setBusy(true);
     setError(null);
     try {
-      await update({ driverUserId: userId.trim() });
-      setRewards(await api.rewards(userId.trim()));
+      const id = bookingId.trim().toUpperCase();
+      const { qr } = await api.bookingQr(id);
+      const p = peekBookingQr(qr);
+      if (!p?.bid || !p.lot || !p.s || !p.e) throw new Error(t.driver.badQr);
+      const b: DriverBooking = { booking_id: p.bid, lot_id: p.lot, start: p.s, end: p.e };
+      const next = await d.update({ bookings: [...d.cfg.bookings.filter((x) => x.booking_id !== b.booking_id), b] });
+      setQrs((m) => ({ ...m, [b.booking_id]: qr }));
+      setBookingId('');
+      if (sensing) await startSensing(next, d.nowMs); // add the new lot to the geofences
     } catch (e) {
       setError(errorText(e));
     } finally {
-      setBusy(null);
+      setBusy(false);
     }
   };
 
-  const loadQr = async () => {
-    setBusy('qr');
-    setError(null);
-    try {
-      setQr(await api.bookingQr(bookingId.trim().toUpperCase()));
-    } catch (e) {
-      setError(errorText(e));
-    } finally {
-      setBusy(null);
-    }
+  const removeBooking = async (id: string) => {
+    if (!d.cfg) return;
+    const next = await d.update({ bookings: d.cfg.bookings.filter((b) => b.booking_id !== id) });
+    if (sensing) await startSensing(next, d.nowMs);
   };
+
+  const toggleSensing = async (on: boolean) => {
+    if (!d.cfg) return;
+    setSensingNote(null);
+    if (!on) {
+      await stopSensing();
+      await d.update({ sensing: false });
+      setSensing(false);
+      return;
+    }
+    const cfg = await d.update({ sensing: true });
+    const r = await startSensing(cfg, d.nowMs);
+    if (r !== 'started') await d.update({ sensing: false });
+    setSensing(r === 'started');
+    setSensingNote(t.driver.sensingResult[r]);
+  };
+
+  const { pending, failed, online } = d.outbox;
+  const bookings = [...(d.cfg?.bookings ?? [])].sort((a, b) => a.start.localeCompare(b.start));
 
   return (
-    <ScrollView style={s.screen} contentContainerStyle={s.body} keyboardShouldPersistTaps="handled">
-      <Muted>{t.driver.intro}</Muted>
-
+    <ScrollView style={s.screen} contentContainerStyle={s.body} keyboardShouldPersistTaps="handled"
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={pull} tintColor={c.brand} />}>
       <Text style={s.label}>{t.driver.userId}</Text>
       <View style={s.row}>
         <TextInput value={userId} onChangeText={setUserId} autoCapitalize="characters" autoCorrect={false}
-          style={[s.input, s.flex]} />
-        <Button label={t.driver.load} onPress={loadRewards} busy={busy === 'rewards'} disabled={!userId.trim()} />
+          style={[s.input, s.flex]} onSubmitEditing={saveUser} />
+        <Button label={t.common.save} onPress={saveUser} disabled={!userId.trim() || userId.trim() === settings.driverUserId} />
       </View>
-      {rewards && (
+      <View style={s.row}>
+        <Badge label={t.driver.outboxStatus(online, pending.length)}
+          fg={online === false ? c.warn : c.ok} bg={online === false ? c.warnSoft : c.okSoft} />
+        <View style={s.flex} />
+        <Button kind="secondary" label={t.driver.rewardsLink} onPress={() => router.push('/rewards')} />
+      </View>
+      {d.error && !d.prompts.length && <Muted>{t.driver.offlinePrompts}</Muted>}
+
+      {d.prompts.length > 0 && <Section title={t.driver.confirmTitle} />}
+      {d.prompts.map((p) => <ConfirmCard key={`${p.stay_id}|${p.question}`} p={p} lot={lotName(p.lot_id)}
+        mocked={d.promptsMocked} onAnswer={d.answer} />)}
+
+      {pending.length > 0 && (
         <Card>
-          <Text style={s.label}>{t.driver.rewards}{rewards.mocked ? ` (${t.common.mock})` : ''}</Text>
-          <View style={s.row}>
-            <Stat value={String(rewards.data.points)} label={t.driver.points} />
-            <Stat value={String(rewards.data.grace_minutes)} label={t.driver.grace} />
-            <Stat value={rewards.data.tier} label={t.driver.tier} />
-          </View>
+          <Text style={s.label}>{t.driver.waiting}</Text>
+          {pending.map((r) => <Muted key={r.id}>{hhmm(r.queuedAt)} · {r.label}{r.lastError ? ` · ${r.lastError}` : ''}</Muted>)}
         </Card>
       )}
+      {failed.map((f) => (
+        <Card key={f.id} style={{ borderStartWidth: 5, borderStartColor: c.bad }}>
+          <Text style={st.q}>{f.label}</Text>
+          <Text style={{ color: c.bad, fontWeight: '700' }}>{t.driver.refused(f.status, f.reason)}</Text>
+          <Button kind="secondary" label={t.sync.dismiss} onPress={() => d.dismissFailed(f.id)} />
+        </Card>
+      ))}
 
-      <Text style={s.label}>{t.driver.bookingId}</Text>
+      <Section title={t.driver.myBookings} />
       <View style={s.row}>
         <TextInput value={bookingId} onChangeText={setBookingId} autoCapitalize="characters" autoCorrect={false}
-          placeholder="B017180" placeholderTextColor={c.muted} style={[s.input, s.flex]} />
-        <Button label={t.driver.showQr} onPress={loadQr} busy={busy === 'qr'} disabled={!bookingId.trim()} />
+          placeholder="B017180" placeholderTextColor={c.muted} style={[s.input, s.flex]} onSubmitEditing={addBooking} />
+        <Button label={t.driver.addBooking} onPress={addBooking} busy={busy} disabled={!bookingId.trim()} />
       </View>
-      {qr && (
-        <Card>
-          <Text style={s.label}>{t.driver.qrString}</Text>
-          <Text selectable style={{ fontFamily: 'monospace', color: c.text }}>{qr.qr}</Text>
-        </Card>
-      )}
       <ErrorLine text={error} />
+      {bookings.length === 0 && <Muted>{t.driver.noBookings}</Muted>}
+      {bookings.map((b) => (
+        <Card key={b.booking_id}>
+          <View style={s.row}>
+            <View style={s.flex}>
+              <Text style={st.q}>{lotName(b.lot_id)}</Text>
+              <Muted>{b.booking_id} · {b.start.slice(5, 10)} {hhmm(b.start)}–{hhmm(b.end)}</Muted>
+            </View>
+            <Button kind="secondary" label={t.driver.remove} onPress={() => removeBooking(b.booking_id)} />
+          </View>
+          {qrs[b.booking_id] && (
+            <>
+              <Text style={s.label}>{t.driver.qrString}</Text>
+              <Text selectable style={st.qr}>{qrs[b.booking_id]}</Text>
+            </>
+          )}
+        </Card>
+      ))}
+
+      <Section title={t.driver.sensingTitle} />
+      <Card>
+        <View style={s.row}>
+          <Text style={[s.label, s.flex]}>{t.driver.sensingSwitch}</Text>
+          <Switch value={sensing} onValueChange={toggleSensing} disabled={support !== 'ok'} trackColor={{ true: c.brand }} />
+        </View>
+        <Muted>{support === 'ok' ? t.driver.sensingHelp : t.driver.sensingResult[support ?? 'needs_dev_build']}</Muted>
+        {sensingNote && <Text style={{ color: sensing ? c.ok : c.warn, fontWeight: '700' }}>{sensingNote}</Text>}
+      </Card>
     </ScrollView>
   );
 }
 
-function Stat({ value, label }: { value: string; label: string }) {
+function ConfirmCard({ p, lot, mocked, onAnswer }: { p: PendingConfirmation; lot: string; mocked: boolean;
+  onAnswer: ReturnType<typeof useDriver>['answer'] }) {
+  const arrival = p.question === 'arrival';
   return (
-    <View style={s.flex}>
-      <Text style={{ fontSize: 24, fontWeight: '800', color: c.brand }}>{value}</Text>
-      <Muted>{label}</Muted>
-    </View>
+    <Card style={{ borderStartWidth: 5, borderStartColor: c.brand }}>
+      <Text style={st.q}>{arrival ? t.driver.didArrive(lot) : t.driver.didLeave(lot)}</Text>
+      <Muted>{[p.booking_id, p.asked_at && hhmm(p.asked_at), mocked && t.common.mock].filter(Boolean).join(' · ')}</Muted>
+      <View style={s.row}>
+        {arrival ? (
+          <>
+            <View style={s.flex}><Button big label={t.driver.arrived} onPress={() => onAnswer(p, 'arrived', t.driver.labelArrived(lot))} /></View>
+            <View style={s.flex}><Button big kind="secondary" label={t.driver.notMe} onPress={() => onAnswer(p, 'not_me', t.driver.labelNotMe(lot))} /></View>
+          </>
+        ) : (
+          <>
+            <View style={s.flex}><Button big label={t.driver.left} onPress={() => onAnswer(p, 'left', t.driver.labelLeft(lot))} /></View>
+            <View style={s.flex}><Button big kind="secondary" label={t.driver.stillHere} onPress={() => onAnswer(p, null, '')} /></View>
+          </>
+        )}
+      </View>
+    </Card>
   );
 }
+
+const st = StyleSheet.create({
+  q: { fontSize: 18, fontWeight: '800', color: c.text },
+  qr: { fontFamily: 'monospace', color: c.text, fontSize: 12 },
+});
