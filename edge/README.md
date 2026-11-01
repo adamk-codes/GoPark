@@ -8,6 +8,10 @@ Old phones stream video to the laptop; two scripts turn that into signals for `P
 | `plate_reader.py` | entrance (or exit) phone at plate height | `camera_plate`, kind `enter` / `exit`, `payload.plate_norm` (+ `ocr_conf`) |
 | `spot_watcher.py` | overhead phone over a few spots | `camera_spot`, kind `occupied` / `vacant`, `payload.space_id` (+ `coverage`) |
 | `define_spots.py` | (helper) | click spot polygons on one frame → `spots.json` |
+| `trigger.py` | (used by `plate_reader --trigger`) | pairs plate reads with `gate_sensor` events |
+| `../sensor_sim.py` | none: fake gate presence sensor | `gate_sensor` enter / exit, `payload.gate_id`, `lane` |
+
+The real gate sensor (an ESP32 with two beams) is built separately; [INTEGRATION.md](INTEGRATION.md) is its contract.
 
 Every signal has a UUID `client_event_id`, a `device_id` (`cam-entrance-1`, `cam-overhead-1`), `lot_id` and
 `observed_at`, and is checked against `contract/schemas/signal.schema.json` before it leaves.
@@ -83,6 +87,35 @@ Exit camera: the same with `--device-id cam-exit-1 --kind exit`. Useful flags:
 - `--verbose`: print every read.
 
 `--source` also takes a video file, an image folder or a webcam index (`0`).
+
+**Gate-sensor trigger (one camera per gate, both directions).** With the presence-sensor pair at the
+gate (built separately; see [INTEGRATION.md](INTEGRATION.md)), the reader can post only around sensor
+events. It keeps reading frames, and ±8 s after each `gate_sensor` event it posts the strongest plate
+(most summed OCR confidence, seen in ≥ `--need` frames). The signal takes the event's direction and
+carries `payload.gate_id` / `lane`:
+
+```bash
+uv run --group edge python -m edge.camera.plate_reader --source http://PHONE_IP:8080/video --lot-id AUB --device-id cam-gate-1 --kind auto --trigger listen --listen 0.0.0.0:8090
+```
+
+- The sensor (or the simulator) also POSTs its event to `http://<laptop>:8090/gate`.
+- `--kind enter` or `exit` with a trigger makes the camera ignore the other direction.
+- `--gate-id` / `--lane` filter the events.
+- `--trigger api` needs a `GET /signals` the API doesn't have yet.
+- If no plate qualifies, the reader posts nothing. The API then records the sensor event as "identity unknown".
+
+Test it without hardware:
+
+```bash
+uv run --group edge python -m edge.camera.plate_reader --source edge/tests/data/gate.mp4 --realtime --loop --lot-id AUB --kind auto --trigger listen --listen 127.0.0.1:8090 --ocr fast
+```
+```bash
+uv run --group edge python -m edge.sensor_sim --lot-id AUB --also http://127.0.0.1:8090/gate
+```
+
+In the sensor sim, type `e` (car in) or `x` (car out), then Enter. Measured on 8005: enter + plate →
+`CHECKED_IN` (auto). Exit through the same camera → `CHECKED_OUT` (auto). Per-frame time with the fast
+OCR was 61–91 ms mean, while other sessions were using the CPU.
 
 **Overhead camera:**
 

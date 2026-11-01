@@ -723,7 +723,6 @@ edge = [
     { name = "fast-alpr", extra = ["onnx"] },
     { name = "opencv-python" },
     { name = "pillow" },
-    { name = "requests" },
     { name = "ultralytics" },
 ]
 
@@ -752,7 +751,6 @@ edge = [
     { name = "fast-alpr", extras = ["onnx"], specifier = ">=0.3" },
     { name = "opencv-python", specifier = ">=4.10" },
     { name = "pillow", specifier = ">=10.4" },
-    { name = "requests", specifier = ">=2.32" },
     { name = "ultralytics", specifier = ">=8.3" },
 ]
 
