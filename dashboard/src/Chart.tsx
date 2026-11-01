@@ -1,6 +1,6 @@
 // Thin ECharts wrapper + theme tokens. Charts read colours from the CSS tokens in index.css,
 // so light/dark come from one place and a theme switch repaints every chart.
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import * as echarts from 'echarts/core'
 import { BarChart, HeatmapChart, LineChart, ScatterChart } from 'echarts/charts'
 import {
@@ -63,13 +63,14 @@ export function base(t: Tokens) {
   return { axis, tooltip, textStyle: { fontFamily: 'Inter, system-ui, sans-serif', color: t.fg } }
 }
 
-export function Chart({ option, className = 'chart', onClick, label }: {
-  option: Option; className?: string; label: string
+export function Chart({ option, className = 'chart', onClick, label, style }: {
+  option: Option; className?: string; label: string; style?: CSSProperties
   onClick?: (params: { seriesName?: string; data?: unknown; dataIndex: number }) => void
 }) {
   const ref = useRef<HTMLDivElement>(null)
   const inst = useRef<echarts.ECharts | null>(null)
   const click = useRef(onClick)
+  const last = useRef<string | null>(null) // serialized option last applied
   useEffect(() => { click.current = onClick }, [onClick])
 
   useEffect(() => {
@@ -78,10 +79,16 @@ export function Chart({ option, className = 'chart', onClick, label }: {
     chart.on('click', (p) => click.current?.(p as never))
     const ro = new ResizeObserver(() => chart.resize())
     ro.observe(ref.current!)
-    return () => { ro.disconnect(); chart.dispose(); inst.current = null }
+    return () => { ro.disconnect(); chart.dispose(); inst.current = null; last.current = null }
   }, [])
 
-  useEffect(() => { inst.current?.setOption(option, true) }, [option])
+  // Live pages re-render every few seconds with equal data; skip those so charts don't re-animate from scratch.
+  useEffect(() => {
+    const key = JSON.stringify(option)
+    if (key === last.current) return
+    last.current = key
+    inst.current?.setOption(option, true)
+  }, [option])
 
-  return <div ref={ref} className={className} role="img" aria-label={label} />
+  return <div ref={ref} className={className} style={style} role="img" aria-label={label} />
 }
