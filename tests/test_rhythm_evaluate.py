@@ -72,3 +72,17 @@ def test_evaluate_writes_metrics_into_the_run(workdir):
             assert s["hit_at_1"] is None or 0 <= s["hit_at_1"] <= 1
     assert "engine" in saved["recovery"] and "by_persona" in saved["recovery"]["engine"]
     assert saved["by_persona"]["test"]["engine"]
+    # P2 keys (CONTRACT.md §8)
+    cal = saved["calibration"]
+    assert set(cal["test"]) == {"before", "after"} and cal["fitted_on"] == saved["cutoffs"]["validation"]
+    assert cal["test"]["after"]["brier"] is not None and cal["test"]["after"]["bins"]
+    rem = saved["reminders"]
+    assert 0 < rem["tau"] < 1 and {"tau", "precision", "recall", "reminders"} <= set(rem["test"][0])
+    assert set(saved["forecast"]) == {"engine", "B2"}
+    assert {"started", "ended"} & set(saved["drift"]["engine"]["summary"])
+    assert [a["variant"] for a in saved["ablation"]] == ["full", "-prior", "-decay", "-drift", "-activity", "-calibration"]
+    assert saved["ablation"][0]["hit_at_1"] == saved["next_booking"]["test"]["engine"]["hit_at_1"]
+    ch = saved["charts"]
+    assert {"headline", "hit_at_1_by_cutoff", "reliability", "reminder_curve", "forecast", "persona_table",
+            "drift_delay", "ablation"} <= set(ch)
+    assert len(ch["hit_at_1_by_cutoff"]["cutoffs"]) == len(ch["hit_at_1_by_cutoff"]["series"]["B2"]) == 8
