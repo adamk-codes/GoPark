@@ -1,20 +1,10 @@
 import * as Crypto from 'expo-crypto';
+import { uuidv7 as uuidv7From } from '../core/ids';
 
 const hex = (bytes: Uint8Array) => Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 
-// UUIDv7 (RFC 9562): 48-bit ms timestamp, then random bits. Sortable, so the outbox keeps order.
-export function uuidv7(): string {
-  const b = Crypto.getRandomBytes(16);
-  let ms = Date.now();
-  for (let i = 5; i >= 0; i--) {
-    b[i] = ms % 256;
-    ms = Math.floor(ms / 256);
-  }
-  b[6] = (b[6] & 0x0f) | 0x70;
-  b[8] = (b[8] & 0x3f) | 0x80;
-  const h = hex(b);
-  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
-}
+// UUIDv7 client_event_id (sortable, so the outbox keeps order), with randomness from expo-crypto.
+export const uuidv7 = () => uuidv7From((n) => Crypto.getRandomBytes(n));
 
 export function newDeviceId(): string {
   return `dev-attendant-${hex(Crypto.getRandomBytes(3))}`;

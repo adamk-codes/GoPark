@@ -1,13 +1,13 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { createApi, DEFAULT_API_URL, DEFAULT_MOCK_PENDING, type Api } from '../api';
-import { newDeviceId, uuidv7 } from './ids';
+import { createApi, DEFAULT_API_URL, DEFAULT_DEV_MOCKS, type Api } from '../api';
+import { newDeviceId } from './ids';
 
 export interface Settings {
   apiUrl: string;
   lotId: string;
   deviceId: string;
-  mockPending: boolean;
+  devMocks: boolean; // dev only: stub endpoints answer with mocks
   driverUserId: string;
 }
 
@@ -23,7 +23,7 @@ interface AppCtx {
 const Ctx = createContext<AppCtx | null>(null);
 
 function defaults(): Settings {
-  return { apiUrl: DEFAULT_API_URL, lotId: 'AUB', deviceId: newDeviceId(), mockPending: DEFAULT_MOCK_PENDING,
+  return { apiUrl: DEFAULT_API_URL, lotId: 'AUB', deviceId: newDeviceId(), devMocks: DEFAULT_DEV_MOCKS,
     driverUserId: 'U0001' };
 }
 
@@ -36,7 +36,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       try {
         const raw = await AsyncStorage.getItem(KEY);
         if (raw) {
-          setSettings((s) => ({ ...s, ...JSON.parse(raw) }));
+          // `mockPending` was the phase-1 flag (on by default); it no longer turns mocks on.
+          const { mockPending: _old, ...saved } = JSON.parse(raw);
+          setSettings((s) => ({ ...s, ...saved }));
         } else {
           // First launch: keep the generated device ID for good.
           await AsyncStorage.setItem(KEY, JSON.stringify(latest.current));
@@ -58,8 +60,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const api = useMemo(
-    () => createApi({ baseUrl: settings.apiUrl, deviceId: settings.deviceId, mockPending: settings.mockPending, newId: uuidv7 }),
-    [settings.apiUrl, settings.deviceId, settings.mockPending],
+    () => createApi({ baseUrl: settings.apiUrl, deviceId: settings.deviceId, devMocks: settings.devMocks }),
+    [settings.apiUrl, settings.deviceId, settings.devMocks],
   );
 
   const value = useMemo(() => ({ ready, settings, update, api }), [ready, settings, update, api]);
