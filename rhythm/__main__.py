@@ -1,7 +1,7 @@
 """Rhythm CLI.
 
     uv run python -m rhythm run --input data/bookings.csv [--cutoff 2026-11-15]
-    uv run python -m rhythm evaluate [--input data/bookings.csv] [--truth data/truth.json] [--run-id latest]
+    uv run python -m rhythm evaluate [--input data/bookings.csv] [--truth data/truth.json] [--run-id latest] [--no-ablation]
 """
 from __future__ import annotations
 
@@ -25,6 +25,7 @@ def main() -> None:
     e.add_argument("--input", type=Path, default=ROOT / "data" / "bookings.csv")
     e.add_argument("--truth", type=Path, default=None, help="default: truth.json next to the input")
     e.add_argument("--run-id", default=None, help="write into this run (or 'latest'); default: a fresh run")
+    e.add_argument("--no-ablation", action="store_true", help="skip the ablation (5 extra engine variants)")
     args = ap.parse_args()
 
     if args.cmd == "run":
@@ -32,7 +33,7 @@ def main() -> None:
         print(json.dumps({k: info[k] for k in ("run_id", "cutoff", "model_version", "counts")}, indent=1))
     else:
         from rhythm.evaluate import evaluate, headline
-        m = evaluate(args.input, args.truth, args.run_id)
+        m = evaluate(args.input, args.truth, args.run_id, with_ablation=not args.no_ablation)
         print(f"run {m['run_id']} · test cutoffs {', '.join(m['cutoffs']['test'])}")
         print(headline(m))
         if "recovery" in m:

@@ -5,7 +5,8 @@ inactive_gap_days_min: 21
 inactive_gap_multiplier: 3
 term_break_skip_ratio: 0.5   # a user "sits out" a term break if they book < half their usual rate in it
 # Stage switches for the ablation (all on = full engine).
-stages: {merge_rebook: true, activity: true, discover: true, prior: true, decay: true, chance_test: true}
+stages: {merge_rebook: true, activity: true, discover: true, prior: true, decay: true, chance_test: true,
+         drift: true, calibrate: true}
 discover:
   eps_minutes: 45
   min_samples: 2
@@ -13,20 +14,40 @@ habit:
   decay_half_life_weeks: 4
   time_half_life_weeks: 16   # memory for time-of-day medians (tuned on validation)
   prior_strength_weeks: 2
-  min_posterior_p_gt_half: 0.65   # tuned on validation (0.5–0.8 grid)
+  prior_cluster_weight: 0.7  # share of the prior taken from the same routine's other days (vs the population)
+  min_day_rate: 0.35         # a weekday is "on" if P(rate > this) ≥ min_posterior_p_on
+  min_posterior_p_on: 0.8
   prior_source: clusters     # prior = rate among time-cluster candidates at the lot × weekday
   max_chance_pvalue: 0.05
   chance_rate_cap: 0.5       # null rate for the chance test; daily users are not "chance"
   min_hits: 3
-  min_distinct_weeks: 3
+  min_distinct_weeks: 2      # short histories shrink to the prior and show up as `emerging`
   max_spread_minutes: 60
+  recent_weeks: 4            # window for the "recent rate" (fading test)
+drift:
+  min_segment: 2             # exposed days on each side of a change point
+  min_segment_down: 3        # … and after a drop (three misses in a row happen by chance)
+  min_lr: 9.0                # two-segment likelihood-ratio threshold (≈ p 0.003 for one change)
+  min_shift: 0.4             # and the rate must move by at least this much
+  passes: 2                  # look for a second change inside the newer segment
+  emerging_weeks: 6          # an upward change this recent → emerging
+  emerging_min_weeks: 4      # a routine seen in fewer weeks than this is emerging
+  recent_weeks: 4
+  fade_ratio: 0.5            # recent rate < this × regime rate → fading
+  switch_window_days: 28     # ended + started within this many days → routine switch
 predict:
   horizon_days: 14
   hit_tolerance_minutes: 60
+  inactivity_half_life_weeks: 2   # activity factor halves every 2 weeks past 2× the usual gap
+  gap_window_weeks: 8             # occasional users: booking rate over this window
+calibrate:
+  weeks: 4                   # `rhythm run` fits isotonic calibration + τ on the 4 weeks before its cutoff
 reminder:
   target_precision: 0.8
   default_threshold: 0.7
   locked_in_threshold: 0.9
+  locked_in_streak: 6        # … or p ≥ τ and this many booked routine slots in a row
+  emerging_min_p: 0.3        # emerging routines get a "cement the habit" reminder above this
   cooldown_hours: 48
   evening_before_hour: 20
   morning_cutoff_hour: 11
