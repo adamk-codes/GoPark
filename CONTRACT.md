@@ -27,7 +27,7 @@ Every builder (person or Claude session) codes against this file. It defines the
 | `lot.kind` | `open`, `underground`, `gated`, `valet` |
 | `stay.state` | `EXPECTED`, `ARRIVING`, `CHECKED_IN`, `OVERSTAY`, `CHECKED_OUT`, `UNCONFIRMED_DEPARTURE`, `NO_SHOW`, `CANCELLED` |
 | `method` (how a state change happened) | `auto`, `driver`, `attendant`, `inferred` |
-| `signal.source` | `geofence`, `motion`, `ble`, `nfc`, `gate_qr`, `booking_qr`, `camera_plate`, `camera_spot`, `gate_sensor`, `car_bt`, `attendant`, `driver_confirm` |
+| `signal.source` | `geofence`, `motion`, `ble`, `nfc`, `gate_qr`, `booking_qr`, `camera_plate`, `camera_spot`, `camera_vehicle`, `gate_sensor`, `car_bt`, `attendant`, `driver_confirm` |
 | `signal.kind` | `enter`, `exit`, `park`, `unpark`, `scan`, `occupied`, `vacant`, `confirm`, `deny` |
 | `alert.type` | `upcoming_arrival`, `overstay`, `unconfirmed_departure`, `no_show`, `unknown_vehicle`, `plate_mismatch`, `low_confidence`, `anomaly` |
 | `pattern.state` | `emerging`, `active`, `fading`, `ended` |
@@ -48,6 +48,10 @@ Produced by `uv run python -m tools.generator` (see README). Everything is seede
 | `status` | enum | `booked` only for bookings after the history end |
 | `created_at` | ISO time | optional column; engine must work without it |
 | `plate` | str | `plate_display`; optional column |
+| `vehicle_color` | enum | Optional visual profile; white/silver/black/grey/blue/red/green/beige |
+| `vehicle_body` | enum | Optional visual profile; sedan/hatchback/suv/pickup/van |
+| `vehicle_make` | enum | Optional visual profile; Kia/Toyota/Hyundai/Nissan/Mercedes/BMW |
+| `vehicle_model` | str | Optional; generator currently leaves this blank |
 
 **`truth.json`** — ground truth for evaluation. **Engine code must never read it** except in `rhythm/evaluate`.
 ```json
@@ -90,6 +94,7 @@ Schema: `contract/schemas/signal.schema.json`.
  "payload": {"accuracy_m": 18, "rssi": -71, "plate_norm": "B123456", "space_id": "LAU-07"}}
 ```
 `user_id`, `booking_id` and `payload` fields are optional; cameras send `plate_norm` and/or `space_id` with no user.
+- **Car-look candidate (T1).** `GET /lots/{lot_id}/expected_vehicles?around=<ISO time>&window_min=20` returns active/upcoming booked vehicles near that time as `[{booking_id,user_id,vehicle:{color,body,make,model?},p}]`. `camera_vehicle` is emitted only when a gate event has no plate; payload is `{candidates:[{booking_id,score,vehicle}],top_margin,model?}`. It contains booking IDs and appearance classes only, never images. The vehicle-only likelihood is capped below the auto-confirm threshold; it can only suggest a booking or request driver confirmation.
 - **Camera attribution (P2).** `camera_plate` is matched to a booking at that lot by `payload.plate_norm` (normalized; exact, or one misread character when `payload.ocr_conf < 0.8` and only one booked plate fits), within 90 min before start to 180 min after end. `enter` prefers a booking without a stay and the nearest start, `exit` one with an open stay and the nearest end. `camera_spot` (`occupied`/`vacant`) is matched by `payload.space_id` to the booking holding that space and only adds occupancy evidence. No `booking_id` is needed from cameras.
 - **Gate presence sensor (P2).** Each gate lane has a pair of presence sensors (IR break-beam or ultrasonic, ~1 m apart, on an ESP32); the trigger order gives the direction. It posts `{"source": "gate_sensor", "kind": "enter"|"exit", "device_id": "gate-AUB-1", "lot_id": "AUB", "payload": {"gate_id": "AUB-1", "lane": 1}}` with no user, booking or plate: it says *a car moved*, the lane's `camera_plate` says *who*.
   - **Paired:** a `gate_sensor` event and a `camera_plate` read at the same lot with the same direction within `gate_pairing.window_s` (8 s) are one car; the sensor event then counts for the plate's booking with `signals.gate_sensor.log_lr` (pairing bonus, 2.0) on top of the plate read. Opposite directions never pair. A plate read without a sensor event counts as before.
@@ -105,6 +110,7 @@ Base URL `http://<laptop-ip>:8000`. JSON unless noted. Status column says what e
 | `GET /health` | `{ok, now, version}` | ✅ P0 |
 | `GET /lots` | List lots (from DB) | ✅ P0 |
 | `GET /lots/{lot_id}/overview` | Counts + expected arrivals; schema `lot_overview`; `occupied` includes unidentified gate entries and excludes unclaimed gate exits (§6) | ✅ P0 (counts from bookings; expected list without C2 yet) |
+| `GET /lots/{lot_id}/expected_vehicles?around=&window_min=` | Expected bookings and vehicle appearance profiles near a gate event | 🟡 T1 |
 | `POST /scan` | Body `{lot_id, device_id, client_event_id, qr? , booking_id?, plate?}` → `scan_result` | ✅ P0 (booking_id + plate; QR in P2) |
 | `POST /stays/{stay_id}/checkout` | Body `{device_id, client_event_id, method}` | ✅ P0 |
 | `GET /stays?lot_id=&state=` | Current stays | ✅ P0 |

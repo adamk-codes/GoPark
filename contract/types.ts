@@ -12,7 +12,7 @@ export type StayState =
 export type Method = "auto" | "driver" | "attendant" | "inferred";
 export type SignalSource =
   | "geofence" | "motion" | "ble" | "nfc" | "gate_qr" | "booking_qr"
-  | "camera_plate" | "camera_spot" | "gate_sensor" | "car_bt" | "attendant" | "driver_confirm";
+  | "camera_plate" | "camera_spot" | "camera_vehicle" | "gate_sensor" | "car_bt" | "attendant" | "driver_confirm";
 export type SignalKind =
   | "enter" | "exit" | "park" | "unpark" | "scan" | "occupied" | "vacant" | "confirm" | "deny";
 export type PatternState = "emerging" | "active" | "fading" | "ended";
@@ -65,6 +65,36 @@ export interface Signal {
   kind: SignalKind;
   observed_at: ISOTime;
   payload?: Record<string, unknown>;
+}
+
+export type VehicleColor = "white" | "silver" | "black" | "grey" | "blue" | "red" | "green" | "beige";
+export type VehicleBody = "sedan" | "hatchback" | "suv" | "pickup" | "van";
+export type VehicleMake = "Kia" | "Toyota" | "Hyundai" | "Nissan" | "Mercedes" | "BMW";
+
+export interface VehicleProfile {
+  color: VehicleColor;
+  body: VehicleBody;
+  make: VehicleMake;
+  model?: string | null;
+}
+
+export interface ExpectedVehicle {
+  booking_id: string;
+  user_id: string;
+  vehicle: VehicleProfile;
+  p: number;
+}
+
+export interface CameraVehicleCandidate {
+  booking_id: string;
+  score: number;
+  vehicle: VehicleProfile;
+}
+
+export interface CameraVehiclePayload {
+  candidates: CameraVehicleCandidate[];
+  top_margin: number;
+  model?: string;
 }
 
 export interface SyncEvent {

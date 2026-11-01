@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "camera_vehicle_payload",
+  "type": "object",
+  "properties": {
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "booking_id": { "type": "string" },
+          "score": { "type": "number", "minimum": 0, "maximum": 1 },
+          "vehicle": {
+            "type": "object",
+            "properties": {
+              "color": { "enum": ["white", "silver", "black", "grey", "blue", "red", "green", "beige"] },
+              "body": { "enum": ["sedan", "hatchback", "suv", "pickup", "van"] },
+              "make": { "enum": ["Kia", "Toyota", "Hyundai", "Nissan", "Mercedes", "BMW"] },
+              "model": { "type": ["string", "null"] }
+            },
+            "required": ["color", "body", "make"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["booking_id", "score", "vehicle"],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "maxItems": 10
+    },
+    "top_margin": { "type": "number", "minimum": 0, "maximum": 1 },
+    "model": { "type": "string" }
+  },
+  "required": ["candidates", "top_margin"],
+  "additionalProperties": false
+}
