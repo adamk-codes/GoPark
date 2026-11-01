@@ -48,6 +48,53 @@ npm --prefix apps/mobile run start
 uv run pytest
 ```
 
+## Integrating a gate sensor
+A gate lane has a pair of presence sensors (IR break-beam or ultrasonic, ~1 m apart, on an ESP32). The order in which the two beams break gives the direction (A then B = `enter`, B then A = `exit`). The sensor says *a car passed*; the lane's plate camera says *who*. The full rules are in [CONTRACT.md](CONTRACT.md) §6 ("Gate presence sensor").
+
+**Send one signal per car that passes**: `POST /signals` with a JSON body, either one signal or `{"signals": [...]}` for a batch.
+
+| Field | Value |
+|---|---|
+| `client_event_id` | Unique per event (≥ 8 chars), e.g. a UUID. Retries with the same id are ignored, so resending after a timeout is safe. |
+| `device_id` | `gate-<LOT>-<n>`, e.g. `gate-AUB-1` |
+| `lot_id` | One of `GET /lots`: `AUB`, `BDD`, `LAU`, `HAMRA`, `VERDUN`, `ACHRAFIEH` |
+| `source` / `kind` | `gate_sensor` / `enter` or `exit` |
+| `observed_at` | When the second beam broke, ISO 8601 with offset |
+| `payload` | `{"gate_id": "AUB-1", "lane": 1}` (`lane` optional) |
+| `user_id`, `booking_id` | Leave them out: the sensor doesn't know who it is |
+
+Use the API's demo clock for `observed_at` while testing. It starts on Monday 2026-11-16 07:50 Beirut time, and events far from it look old. Either read it with `GET /dev/clock`, or move it to real time with `POST /dev/clock {"now": "<your ISO time>"}`.
+
+```bash
+curl -s http://localhost:8000/dev/clock
+```
+```bash
+curl -s -X POST http://localhost:8000/signals -H "Content-Type: application/json" -d '{"client_event_id": "gate-AUB-1-000001", "device_id": "gate-AUB-1", "lot_id": "AUB", "source": "gate_sensor", "kind": "enter", "observed_at": "2026-11-16T07:51:00+02:00", "payload": {"gate_id": "AUB-1", "lane": 1}}'
+```
+Expected response, `200`:
+```json
+{"accepted": 1, "duplicates": 0}
+```
+Sending the same `client_event_id` again gives `{"accepted": 0, "duplicates": 1}`. A bad `source`, `kind` or missing field gives `422` with the reason.
+
+**What happens next:**
+- **A plate read of the same direction within 8 s** (`camera_plate` at the same lot) pairs with the event: one identified car, and the booking's stay goes `CHECKED_IN` / `CHECKED_OUT` with strong evidence.
+- **No plate read:** after the window, the next scheduler pass (every 30 s, or immediately with `POST /dev/tick`) does one of two things:
+  - an `enter` becomes an unknown-car stay `G-<id>` plus a `low_confidence` alert;
+  - an `exit` closes an unknown-car stay at that lot if there is one; otherwise it raises an alert and the lot's `occupied` count goes down by one.
+
+Check with:
+```bash
+curl -s -X POST http://localhost:8000/dev/tick
+```
+```bash
+curl -s http://localhost:8000/lots/AUB/overview
+```
+```bash
+curl -s "http://localhost:8000/alerts?lot_id=AUB"
+```
+Live updates: `WS /live?lot_id=AUB` pushes every stay/alert change as `{"type": "stay"|"alert", "data": {...}}`.
+
 ## What works now (phase P0)
 | Part | Status |
 |---|---|

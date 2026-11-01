@@ -120,6 +120,22 @@ def add_gate_sensors(traces: list[Trace], seed: int = 1) -> None:
         t.lines.sort(key=lambda line: line["observed_at"])
 
 
+PROMPT_AFTER_MIN = 3
+
+
+def driver_answer(booking_id: str, arrives: bool, asked_at: datetime, p: float, seed: int = 7):
+    """Whether (and when, how) the driver answers an "arrived?" prompt: (answer time, answer) or None.
+
+    The app prompts once a stay has been ARRIVING for PROMPT_AFTER_MIN (auto-confirm usually wins
+    before that) and the driver taps 1-5 min later; the answer counts only if the stay is still
+    ARRIVING then. Same draw for the replay and the offline emulation."""
+    import random
+    rng = random.Random(f"{seed}:{booking_id}")
+    if p <= 0 or rng.random() >= p:
+        return None
+    return asked_at + timedelta(minutes=PROMPT_AFTER_MIN + rng.uniform(1, 5)), "arrived" if arrives else "not_me"
+
+
 @dataclass
 class Step:
     at: datetime

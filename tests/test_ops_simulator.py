@@ -115,3 +115,19 @@ def test_cli_dry_run_prints_the_schedule(workdir):
                           "--scenario", "underground", "--limit", "2"],
                          cwd=ROOT, check=True, capture_output=True, text=True).stdout
     assert out.startswith("2 bookings") and "signals in" in out and "ticks" in out
+
+
+def test_driver_confirm_resolves_asks_the_same_way_in_replay_and_emulation(ops, workdir):
+    everything = load_traces(workdir)
+    picked = [t for t in everything if t.scenario in ("weak_gps", "no_show")][:6]
+    assert picked
+    offline = {t.booking_id: ev.emulate(t, FIXED_FUSION, [], driver_confirm=1.0) for t in picked}
+    assert any(r["in_method"] == "driver" for r in offline.values()), "no weak_gps ask in the test data"
+    records = replay(ops, picked, speed=0, tick_min=10, driver_confirm=1.0)
+    for rec in records:
+        emulated = offline[rec["booking_id"]]
+        assert (rec["in_method"], bool(rec["confirmed_at"])) == (emulated["in_method"], bool(emulated["confirmed_at"]))
+        if not rec["arrives"]:
+            assert not rec["confirmed_at"]   # no-show drivers answer "not me"
+    m = ev.metrics(records)
+    assert m["ask_driver_rate"] in (0.0, None) and m["driver_confirm_rate"] is not None
