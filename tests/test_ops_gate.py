@@ -4,7 +4,6 @@ from __future__ import annotations
 import itertools
 from datetime import timedelta
 
-from api import db
 from tests.conftest import at, booking_row
 
 _ids = itertools.count()
@@ -36,6 +35,7 @@ def tick(client, when):
 
 
 def seconds(when: str, s: float) -> str:
+    from api import db   # not at import time: conftest points GOPARK_DB at the test folder first
     return (db.parse(when) + timedelta(seconds=s)).isoformat()
 
 
