@@ -15,7 +15,7 @@ import pandas as pd
 from rhythm import baselines
 from rhythm.baselines import TZ
 from rhythm.io import load_bookings, load_calendar, load_config, new_run_id, runs_dir, write_run
-from rhythm.stages import activity, clean, discover, habit
+from rhythm.stages import activity, clean, discover, drift, habit
 from rhythm.stages.common import DAY_FULL, DAY_NAMES, hhmm, switch
 from rhythm.stages.predict import first_booking, next_per_user, slots
 
@@ -40,7 +40,9 @@ def analyse(df: pd.DataFrame, cutoff: date, cfg: dict, calendar: dict | None = N
     exposure, users = activity(c, cutoff, cfg, calendar, enabled=switch(cfg, "activity"))
     c = discover(c, cfg, enabled=switch(cfg, "discover"))
     day_stats, routines = habit(c, exposure, cutoff, cfg, use_prior=switch(cfg, "prior"),
-                                use_decay=switch(cfg, "decay"), use_chance=switch(cfg, "chance_test"))
+                                use_decay=switch(cfg, "decay"), use_chance=switch(cfg, "chance_test"),
+                                use_drift=switch(cfg, "drift"))
+    routines = drift.label_states(routines, cutoff, cfg, enabled=switch(cfg, "drift"))
     sl = slots(day_stats, users, cutoff, calendar, cfg["predict"]["horizon_days"])
     return {"cutoff": cutoff, "clean": c, "exposure": exposure, "users": users,
             "day_stats": day_stats, "routines": routines, "slots": sl}
@@ -99,7 +101,8 @@ def pattern_rows(an: dict, cfg: dict, run_id: str) -> list[dict]:
             conf = round(float(nxt["p"]), 3) if nxt is not None else round(float(r.mean_p), 3)
             days = [DAY_NAMES[d] for d in r.days]
             rows.append({**base, "pattern_id": f"{uid}-P{k}", "is_primary": k == 1,
-                         "pattern_type": "recurring", "state": "active", "days": days,
+                         "change_date": r.change_date.date().isoformat() if pd.notna(r.change_date) else None,
+                         "pattern_type": "recurring", "state": r.state, "days": days,
                          "label": baselines.day_label(days),
                          "time_window": {"center": hhmm(r.center), "spread_min": round(float(r.spread), 1)},
                          "location_id": r.location_id, "support": int(r.support),

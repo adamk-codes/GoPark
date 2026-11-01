@@ -251,7 +251,13 @@ def recovery(predicted: dict[str, list[dict]], truth: dict, end: date) -> dict:
 def engine_routines(an: dict) -> dict[str, list[dict]]:
     from rhythm.stages.common import DAY_NAMES, hhmm
     return {uid: [{"days": [DAY_NAMES[d] for d in r.days], "location_id": r.location_id, "center": hhmm(r.center)}
-                  for r in g.itertuples()] for uid, g in an["routines"].groupby("user_id")}
+                  for r in g.itertuples()] for uid, g in current_routines(an).groupby("user_id")}
+
+
+def current_routines(an: dict) -> pd.DataFrame:
+    """Routines the engine says the user has now (state ≠ ended)."""
+    r = an["routines"]
+    return r[r["state"] != "ended"] if "state" in r else r
 
 
 def b2_routines(df: pd.DataFrame, cutoff: date, cfg: dict) -> dict[str, list[dict]]:
