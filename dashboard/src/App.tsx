@@ -2,14 +2,15 @@ import { useEffect, useState } from 'react'
 import { dayTime, useDemoNow } from './api'
 import { getMode, setMode, type ThemeMode } from './Chart'
 import { DetectionLog } from './DetectionLog'
+import { Evaluation } from './Evaluation'
 import { LiveLots } from './LiveLots'
 import { Patterns } from './Patterns'
 import { UserPage } from './UserPage'
 
-const TABS = { lots: 'Live lots', detection: 'Detection log', patterns: 'Booking patterns', user: 'User drill-down' } as const
+const TABS = { lots: 'Live lots', detection: 'Detection log', patterns: 'Booking patterns', user: 'User drill-down', evaluation: 'Evaluation' } as const
 type Tab = keyof typeof TABS
 
-// Hash routes: #lots, #detection, #detection/AUB/S-B000123, #patterns, #user/U0001
+// Hash routes: #lots, #detection, #detection/AUB/S-B000123, #patterns, #user/U0001, #evaluation
 function parseHash(): { tab: Tab; arg: string | null; arg2: string | null } {
   const [head, arg, arg2] = location.hash.slice(1).split('/')
   const dec = (s?: string) => (s ? decodeURIComponent(s) : null)
@@ -60,6 +61,7 @@ export default function App() {
       {route.tab === 'detection' && <DetectionLog now={now} lot={route.arg} stayId={route.arg2} />}
       {route.tab === 'patterns' && <Patterns />}
       {route.tab === 'user' && <UserPage userId={route.arg} />}
+      {route.tab === 'evaluation' && <Evaluation />}
     </>
   )
 }
