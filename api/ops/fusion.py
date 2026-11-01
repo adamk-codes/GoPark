@@ -5,7 +5,8 @@
 `score` and `decide` are pure (no database), so tools/simulator can replay traces offline
 with other settings. `fuse_booking` loads one booking's signals, calls `decide` and writes the
 stay, evidence, audit and alerts. `attribute_camera` links camera signals (no booking_id) to a
-booking by plate or watched space. `sweep` runs the time-based low-confidence rule.
+booking by plate or watched space; `pair_gate` pairs gate presence sensor events with plate reads.
+`sweep` runs the time-based rules (unidentified gate events, low confidence).
 """
 from __future__ import annotations
 
@@ -295,6 +296,8 @@ def _check_out(conn, stay, *, out_at: datetime, method: str, conf: float | None,
     if stay["booking_id"]:
         conn.execute("UPDATE bookings SET status='completed', updated_at=? WHERE id=?", (db.utc(now), stay["booking_id"]))
     _resolve_alerts(conn, now, stay_id=stay["id"])
+    if stay["booking_id"]:
+        resolve_gate(conn, stay["lot_id"], "exit", out_at, stay["booking_id"], stay["id"])
     after = conn.execute("SELECT * FROM stays WHERE id = ?", (stay["id"],)).fetchone()
     audit(conn, action=action, entity="stay", entity_id=stay["id"], lot_id=stay["lot_id"], before=before,
           after=stay_out(after), observed_at=out_at, actor_type="system")
@@ -343,6 +346,8 @@ def fuse_booking(conn, booking_id: str) -> dict | None:
               entity_id=stay_id, lot_id=booking["lot_id"], before=before, after=stay_out(stay),
               observed_at=d["in_at"], actor_type="system")
         _resolve_alerts(conn, now, booking_id=booking_id, alert_type="low_confidence")
+        if before is None:
+            resolve_gate(conn, booking["lot_id"], "enter", d["in_at"], booking_id, stay_id)
         if d["arrival"] == "check_in":
             _close_elsewhere(conn, booking, d["in_at"], d["arrival_p"], now)
     elif stay is not None and stay["state"] == "ARRIVING" and d["arrival_p"] is not None:
@@ -398,11 +403,160 @@ def inferred_departure(conn, stay, now: datetime) -> datetime | None:
     if spot and spot[-1]["kind"] == "occupied" and now < end + _minutes(CONFIG, "still_parked_max_min", 180):
         return None
     exits = [s["observed_at"] for s in signals if s["kind"] in DEPARTURE_POSITIVE]
-    return exits[-1] if exits else end
+    if exits:
+        return exits[-1]
+    # A car left through the gate unidentified near the booking end: most likely this one.
+    window = _minutes(CONFIG.get("gate_pairing", {}), "resolve_window_min", 15) * 2
+    gate = conn.execute(
+        "SELECT observed_at FROM gate_events WHERE lot_id = ? AND kind = 'exit' AND status = 'unidentified' "
+        "AND stay_id IS NULL AND observed_at BETWEEN ? AND ? "
+        "ORDER BY ABS(julianday(observed_at) - julianday(?)) LIMIT 1",
+        (stay["lot_id"], db.utc(max(since, end - window)), db.utc(min(now, end + window)), db.utc(end))).fetchone()
+    return db.parse(gate["observed_at"]) if gate else end
+
+
+# ---------- gate presence sensors ----------
+def pair_gate(conn, signal_id: int) -> str | None:
+    """Pair a new `gate_sensor` or `camera_plate` signal with its counterpart: same lot, same direction,
+    within `gate_pairing.window_s`. The pair is one identified car; returns the plate read's booking."""
+    sig = conn.execute("SELECT * FROM signals WHERE id = ?", (signal_id,)).fetchone()
+    if sig is None or sig["kind"] not in ("enter", "exit"):
+        return None
+    window = timedelta(seconds=float(CONFIG.get("gate_pairing", {}).get("window_s", 8)))
+    observed = db.parse(sig["observed_at"])
+    span = (sig["lot_id"], sig["kind"], db.utc(observed - window), db.utc(observed + window), sig["observed_at"])
+    if sig["source"] == "gate_sensor":
+        conn.execute("INSERT OR IGNORE INTO gate_events(signal_id, lot_id, kind, observed_at) VALUES (?,?,?,?)",
+                     (signal_id, sig["lot_id"], sig["kind"], sig["observed_at"]))
+        plate = conn.execute(
+            "SELECT s.* FROM signals s WHERE s.source = 'camera_plate' AND s.lot_id = ? AND s.kind = ? "
+            "AND s.observed_at BETWEEN ? AND ? AND NOT EXISTS (SELECT 1 FROM gate_events g WHERE g.plate_signal_id = s.id) "
+            "ORDER BY ABS(julianday(s.observed_at) - julianday(?)) LIMIT 1", span).fetchone()
+        gate_id = signal_id
+    elif sig["source"] == "camera_plate":
+        plate = sig
+        gate = conn.execute(
+            "SELECT signal_id FROM gate_events WHERE lot_id = ? AND kind = ? AND status IN ('pending', 'unidentified') "
+            "AND plate_signal_id IS NULL AND observed_at BETWEEN ? AND ? "
+            "ORDER BY ABS(julianday(observed_at) - julianday(?)) LIMIT 1", span).fetchone()
+        gate_id = gate["signal_id"] if gate else None
+    else:
+        return None
+    if plate is None or gate_id is None:
+        return None
+    event = conn.execute("SELECT * FROM gate_events WHERE signal_id = ?", (gate_id,)).fetchone()
+    booking_id = plate["matched_booking_id"]
+    now = db.now(conn)
+    if event["status"] == "unidentified":
+        _undo_unidentified(conn, event, now)   # the plate upload was late: a known car after all
+    conn.execute("UPDATE gate_events SET status = 'paired', plate_signal_id = ?, booking_id = ? WHERE signal_id = ?",
+                 (plate["id"], booking_id, gate_id))
+    if booking_id:
+        conn.execute("UPDATE signals SET matched_booking_id = ? WHERE id = ?", (booking_id, gate_id))
+    else:
+        # Plate read but nothing booked for it: an identified car without a booking.
+        _unidentified(conn, event, now, plate_norm=json.loads(plate["payload"] or "{}").get("plate_norm"))
+        conn.execute("UPDATE gate_events SET status = 'paired' WHERE signal_id = ?", (gate_id,))
+    return booking_id
+
+
+def _unidentified(conn, event, now: datetime, plate_norm: str | None = None) -> None:
+    """A gate event no booking claimed. Entry: a booking-less stay G-<signal id> (counted in occupancy) + alert.
+    Exit: closes the oldest open booking-less stay at the lot, else an alert (occupancy counts the car as gone)."""
+    at = db.parse(event["observed_at"])
+    hhmm = at.astimezone(db.TZ).strftime("%H:%M")
+    payload = conn.execute("SELECT payload FROM signals WHERE id = ?", (event["signal_id"],)).fetchone()["payload"]
+    gate = json.loads(payload or "{}").get("gate_id", "gate")
+    who = plate_norm or "identity unknown"
+    stay_id = None
+    if event["kind"] == "enter":
+        stay_id = f"G-{event['signal_id']}"
+        conn.execute("INSERT OR IGNORE INTO stays(id, booking_id, lot_id, space_id, plate_norm, state, in_at, in_method, "
+                     "in_conf, out_at, out_method, out_conf, inferred, updated_at) "
+                     "VALUES (?, NULL, ?, NULL, ?, 'CHECKED_IN', ?, 'auto', NULL, NULL, NULL, NULL, 1, ?)",
+                     (stay_id, event["lot_id"], plate_norm, event["observed_at"], db.utc(now)))
+        stay = conn.execute("SELECT * FROM stays WHERE id = ?", (stay_id,)).fetchone()
+        audit(conn, action="gate_unidentified_entry", entity="stay", entity_id=stay_id, lot_id=event["lot_id"],
+              before=None, after=stay_out(stay), observed_at=at, actor_type="system")
+        message = f"Car in at {event['lot_id']} {gate} {hhmm}, {who}, no booking matched; scan it or wait for the phone."
+    else:
+        q = ("SELECT * FROM stays WHERE lot_id = ? AND booking_id IS NULL AND state = 'CHECKED_IN' AND in_at <= ? "
+             + ("AND plate_norm = ? " if plate_norm else "AND plate_norm IS NULL ") + "ORDER BY in_at LIMIT 1")
+        unknown = conn.execute(q, (event["lot_id"], event["observed_at"]) + ((plate_norm,) if plate_norm else ())
+                               ).fetchone()
+        if unknown:
+            _check_out(conn, unknown, out_at=at, method="inferred", conf=None, inferred=True,
+                       action="gate_unidentified_exit", now=now)
+            conn.execute("UPDATE gate_events SET status = 'unidentified', stay_id = ? WHERE signal_id = ?",
+                         (unknown["id"], event["signal_id"]))
+            return
+        message = f"Car out at {event['lot_id']} {gate} {hhmm}, {who}; no open stay matched."
+    stamp = db.utc(now)
+    alert_id = conn.execute(
+        "INSERT INTO alerts(type, lot_id, stay_id, booking_id, severity, status, message, created_at, updated_at) "
+        "VALUES (?, ?, ?, NULL, 'warning', 'open', ?, ?, ?)",
+        ("unknown_vehicle" if plate_norm else "low_confidence", event["lot_id"], stay_id, message, stamp, stamp)
+    ).lastrowid
+    conn.execute("UPDATE gate_events SET status = 'unidentified', stay_id = ?, alert_id = ? WHERE signal_id = ?",
+                 (stay_id, alert_id, event["signal_id"]))
+
+
+def _undo_unidentified(conn, event, now: datetime) -> None:
+    """An unidentified gate event turned out to be a known car: drop its placeholder stay and alert."""
+    if event["alert_id"]:
+        conn.execute("UPDATE alerts SET status='resolved', resolved_by='system', resolved_at=?, updated_at=? "
+                     "WHERE id = ? AND status = 'open'", (db.utc(now), db.utc(now), event["alert_id"]))
+    if event["kind"] == "enter" and event["stay_id"]:
+        stay = conn.execute("SELECT * FROM stays WHERE id = ?", (event["stay_id"],)).fetchone()
+        if stay and stay["booking_id"] is None and stay["state"] == "CHECKED_IN":
+            conn.execute("UPDATE stays SET state = 'CANCELLED', updated_at = ? WHERE id = ?", (db.utc(now), stay["id"]))
+            audit(conn, action="gate_identified", entity="stay", entity_id=stay["id"], lot_id=stay["lot_id"],
+                  before=stay_out(stay), after={**stay_out(stay), "state": "CANCELLED"}, observed_at=now,
+                  actor_type="system")
+
+
+def resolve_gate(conn, lot_id: str, kind: str, at: datetime, booking_id: str | None, stay_id: str) -> None:
+    """A booked stay started (`enter`) or ended (`exit`) at `at`: claim the nearest unidentified gate event."""
+    window = _minutes(CONFIG.get("gate_pairing", {}), "resolve_window_min", 15)
+    claimable = "stay_id IS NOT NULL" if kind == "enter" else "stay_id IS NULL"
+    event = conn.execute(
+        f"SELECT * FROM gate_events WHERE lot_id = ? AND kind = ? AND status = 'unidentified' AND {claimable} "
+        "AND observed_at BETWEEN ? AND ? ORDER BY ABS(julianday(observed_at) - julianday(?)) LIMIT 1",
+        (lot_id, kind, db.utc(at - window), db.utc(at + window), db.utc(at))).fetchone()
+    if event is None:
+        return
+    if kind == "enter":
+        placeholder = conn.execute("SELECT state, plate_norm FROM stays WHERE id = ?", (event["stay_id"],)).fetchone()
+        if placeholder is None or placeholder["state"] != "CHECKED_IN" or placeholder["plate_norm"]:
+            return   # already gone, or a plate we read that is not this booking's
+    _undo_unidentified(conn, event, db.now(conn))
+    conn.execute("UPDATE gate_events SET status = 'resolved', booking_id = ?, stay_id = ? WHERE signal_id = ?",
+                 (booking_id, stay_id, event["signal_id"]))
+
+
+def settle_gates(conn) -> int:
+    """Gate events still unpaired after the pairing window become unidentified."""
+    now = db.now(conn)
+    window = timedelta(seconds=float(CONFIG.get("gate_pairing", {}).get("window_s", 8)))
+    events = conn.execute("SELECT * FROM gate_events WHERE status = 'pending' AND observed_at < ? ORDER BY observed_at",
+                          (db.utc(now - window),)).fetchall()
+    for event in events:
+        _unidentified(conn, event, now)
+    conn.commit()
+    return len(events)
+
+
+def unidentified_exits(conn, lot_id: str, now: datetime) -> int:
+    """Cars seen leaving in the last 24 h that no stay has claimed (subtracted from occupancy)."""
+    return conn.execute("SELECT COUNT(*) FROM gate_events WHERE lot_id = ? AND kind = 'exit' AND status = 'unidentified' "
+                        "AND stay_id IS NULL AND observed_at > ?",
+                        (lot_id, db.utc(now - timedelta(hours=24)))).fetchone()[0]
 
 
 def sweep(conn) -> int:
-    """Re-fuse bookings whose first evidence is old enough for the low-confidence rule; prune the change feed."""
+    """Settle gate events, re-fuse bookings whose first evidence is old enough for the low-confidence rule,
+    and prune the change feed."""
+    settle_gates(conn)
     now = db.now(conn)
     cutoff = db.utc(now - _minutes(CONFIG["thresholds"], "attendant_after_min", 10))
     ids = [r["id"] for r in conn.execute(

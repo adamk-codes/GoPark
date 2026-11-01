@@ -46,7 +46,8 @@ def normalize_plate(plate: str | None) -> str | None:
 # ---------- connection ----------
 def connect() -> sqlite3.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    # Requests, the alert scheduler and /live sockets share the file; wait for a writer instead of failing.
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
@@ -85,7 +86,7 @@ def reset(conn, data_dir: Path = DATA_DIR, prepark: bool = True) -> dict:
     `prepark=False` skips the cars parked at 07:50 so a simulator replay starts from an empty lot.
     """
     conn.executescript(";".join(f"DROP TABLE IF EXISTS {t}" for t in (
-        "changes", "points_ledger", "alerts", "processed_events", "audit_log", "fusion_evidence", "stays", "signals",
+        "changes", "gate_events", "points_ledger", "alerts", "processed_events", "audit_log", "fusion_evidence", "stays", "signals",
         "bookings", "vehicles", "users", "spaces", "lots", "meta")))
     conn.executescript((ROOT / "api" / "schema.sql").read_text(encoding="utf-8"))
     _migrate(conn)

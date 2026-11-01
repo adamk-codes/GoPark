@@ -12,7 +12,7 @@ export type StayState =
 export type Method = "auto" | "driver" | "attendant" | "inferred";
 export type SignalSource =
   | "geofence" | "motion" | "ble" | "nfc" | "gate_qr" | "booking_qr"
-  | "camera_plate" | "camera_spot" | "car_bt" | "attendant" | "driver_confirm";
+  | "camera_plate" | "camera_spot" | "gate_sensor" | "car_bt" | "attendant" | "driver_confirm";
 export type SignalKind =
   | "enter" | "exit" | "park" | "unpark" | "scan" | "occupied" | "vacant" | "confirm" | "deny";
 export type PatternState = "emerging" | "active" | "fading" | "ended";

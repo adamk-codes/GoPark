@@ -15,6 +15,9 @@ elsewhere_factor: 1.0          # weak arrival evidence at another lot counts thi
 strong_elsewhere_log_lr: 4.0   # strong arrival evidence (plate, NFC, QR) at another lot counts against this lot
 still_parked_max_min: 180      # a spot camera that still sees the car delays the inferred checkout this long
 overstay_usd_per_15_min: 1.0   # demo estimate only; payment is out of scope
+gate_pairing:                  # gate presence sensor (break-beam pair) + lane camera
+  window_s: 8                  # a gate_sensor event and a camera_plate read of the same direction this close are one car
+  resolve_window_min: 15       # an unidentified gate event is matched to a stay that starts/ends this close
 matching:                      # attributing camera signals (no booking_id) to bookings
   before_start_min: 90
   after_end_min: 180
@@ -25,6 +28,7 @@ signals:
   ble:           {log_lr: 2.71}   # ~15x
   nfc:           {log_lr: 4.6}    # ~100x
   camera_plate:  {log_lr: 3.91, fuzzy_log_lr: 1.5}   # ~50x; one misread character ~4.5x
+  gate_sensor:   {log_lr: 2.0}    # pairing bonus: counts only when paired with a plate read (alone: who is unknown)
   camera_spot:   {log_lr: 1.1}    # ~3x  (a car is in / left the booked spot, identity unknown)
   gate_qr:       {log_lr: 5.3}    # ~200x
   car_bt:        {log_lr: 2.08}   # ~8x

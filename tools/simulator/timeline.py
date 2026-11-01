@@ -94,6 +94,32 @@ def load_traces(data_dir: Path, *, lots: list[str] | None = None, scenarios: lis
     return out
 
 
+GATE_SENSOR_MISS = 0.02
+# Lot kinds with a gate lane (break-beam pair + plate camera); valet has none (tools/generator CAMERA_KIT).
+GATE_KINDS = {"open", "gated", "underground"}
+
+
+def add_gate_sensors(traces: list[Trace], seed: int = 1) -> None:
+    """Add `gate_sensor` enter/exit lines until the generator emits them: one per real pass through the gate,
+    a few seconds from the plate read when the camera saw the car, else at the true arrival/departure."""
+    import random
+    rng = random.Random(seed)
+    for t in traces:
+        if t.lot_kind not in GATE_KINDS or not t.arrives:
+            continue
+        reads = {line["kind"]: parse(line["observed_at"]) for line in t.lines if line["source"] == "camera_plate"}
+        for kind, actual in (("enter", t.actual_arrival), ("exit", t.actual_departure)):
+            if actual is None or rng.random() < GATE_SENSOR_MISS:
+                continue
+            at = reads[kind] + timedelta(seconds=rng.uniform(-3, 3)) if kind in reads \
+                else actual + timedelta(seconds=rng.uniform(-20, 20))
+            t.lines.append({"client_event_id": f"gate-{t.booking_id}-{kind}", "device_id": f"gate-{t.lot_id}-1",
+                            "user_id": None, "lot_id": t.lot_id, "booking_id": None, "source": "gate_sensor",
+                            "kind": kind, "observed_at": at.isoformat(timespec="seconds"),
+                            "payload": {"gate_id": f"{t.lot_id}-1", "lane": 1}, "truth": True})
+        t.lines.sort(key=lambda line: line["observed_at"])
+
+
 @dataclass
 class Step:
     at: datetime

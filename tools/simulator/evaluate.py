@@ -47,6 +47,11 @@ def _signals(trace: Trace) -> list[tuple[datetime, dict]]:
                                       "lot_id": line["lot_id"], "observed_at": parse(line["observed_at"]),
                                       "elsewhere": line["lot_id"] != trace.lot_id, "fuzzy": fuzzy,
                                       "truth": bool(line.get("truth"))}))
+    # A gate_sensor event is evidence only when paired with one of those plate reads (same direction, within window).
+    window = timedelta(seconds=8)
+    reads = [s for _, s in out if s["source"] == "camera_plate"]
+    out = [(t, s) for t, s in out if s["source"] != "gate_sensor" or any(
+        r["kind"] == s["kind"] and abs(r["observed_at"] - s["observed_at"]) <= window for r in reads)]
     out.sort(key=lambda item: item[0])
     return out
 

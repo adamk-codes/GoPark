@@ -16,7 +16,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from tools.simulator.timeline import build_timeline, load_traces, parse
+from tools.simulator.timeline import add_gate_sensors, build_timeline, load_traces, parse
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -39,12 +39,17 @@ def _filters(p: argparse.ArgumentParser) -> None:
     p.add_argument("--until", help="bookings starting before this ISO time")
     p.add_argument("--limit", type=int, help="first N bookings after filtering")
     p.add_argument("--tick-min", type=float, default=2.0, help="demo minutes between /dev/tick calls (0 = none)")
+    p.add_argument("--gate-sensors", action="store_true",
+                   help="synthesize gate_sensor enter/exit events next to the plate reads (traces lack them)")
 
 
 def _load(args):
-    return load_traces(_data_dir(args.data), lots=args.lot, scenarios=args.scenario, bookings=args.booking,
-                       since=parse(args.since) if args.since else None,
-                       until=parse(args.until) if args.until else None, limit=args.limit)
+    traces = load_traces(_data_dir(args.data), lots=args.lot, scenarios=args.scenario, bookings=args.booking,
+                         since=parse(args.since) if args.since else None,
+                         until=parse(args.until) if args.until else None, limit=args.limit)
+    if args.gate_sensors:
+        add_gate_sensors(traces)
+    return traces
 
 
 def _progress(i, n, step):
@@ -115,6 +120,7 @@ def cmd_evaluate(args) -> None:
         before_records = run(before, "before")
         result = {"generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                   "mode": "offline" if args.offline else "replay", "traces": str(data_dir / "traces"),
+                  "gate_sensors": bool(args.gate_sensors),
                   "bookings": len(traces), "priors": len(priors),
                   "split": {"method": "sha1(booking_id)[0] % 2 (even = tune)",
                             "tune": sum(ev.split_of(t.booking_id) == "tune" for t in traces),

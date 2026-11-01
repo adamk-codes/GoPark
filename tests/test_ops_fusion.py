@@ -4,7 +4,7 @@ import json
 
 import jsonschema
 
-from tests.conftest import schema
+from tests.conftest import FIXED_FUSION, schema
 
 
 def _upcoming_booking(client):
@@ -17,7 +17,9 @@ def _upcoming_booking(client):
     return None
 
 
-def test_signal_batch_fuses_into_stay_with_saved_evidence(client):
+def test_signal_batch_fuses_into_stay_with_saved_evidence(client, monkeypatch):
+    from api.ops import fusion
+    monkeypatch.setattr(fusion, "CONFIG", FIXED_FUSION)   # one geofence = ARRIVING under the starting weights
     found = _upcoming_booking(client)
     assert found, "test data has no upcoming booking in any lot"
     lot_id, booking_id = found

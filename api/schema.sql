@@ -152,6 +152,21 @@ CREATE TABLE IF NOT EXISTS meta (
   value TEXT NOT NULL
 );
 
+-- Gate presence sensors (gate_sensor signals, CONTRACT.md §6): each event is paired with a plate read
+-- (same lot and direction within gate_pairing.window_s), or becomes "car in/out, identity unknown".
+CREATE TABLE IF NOT EXISTS gate_events (
+  signal_id INTEGER PRIMARY KEY REFERENCES signals(id),
+  lot_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('enter','exit')),
+  observed_at TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','paired','unidentified','resolved')),
+  plate_signal_id INTEGER,
+  booking_id TEXT,
+  stay_id TEXT,
+  alert_id INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_gate_events_lot ON gate_events(lot_id, status, observed_at);
+
 -- Change feed for WS /live: one row per stay/alert insert or meaningful update (filled by triggers).
 CREATE TABLE IF NOT EXISTS changes (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

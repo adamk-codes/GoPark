@@ -20,6 +20,7 @@ def workdir(tmp_path_factory) -> Path:
     os.environ["GOPARK_DATA"] = str(d)
     os.environ["GOPARK_DB"] = str(d / "test.sqlite")
     os.environ["GOPARK_RUNS"] = str(d / "runs")
+    os.environ["GOPARK_SCHEDULER"] = "0"   # tests drive time-based rules with /dev/tick, not the 30 s loop
     subprocess.run([sys.executable, "-m", "tools.generator", "--users", "60", "--weeks", "12",
                     "--seed", "3", "--out", str(d)], cwd=ROOT, check=True, capture_output=True)
     return d
@@ -52,9 +53,10 @@ FIXED_FUSION = {
     "min_evidence_log_lr": 0.0, "min_stay_min": 5, "elsewhere_factor": 1.0, "strong_elsewhere_log_lr": 4.0,
     "still_parked_max_min": 180, "overstay_usd_per_15_min": 1.0,
     "matching": {"before_start_min": 90, "after_end_min": 180, "fuzzy_below_conf": 0.8},
+    "gate_pairing": {"window_s": 8, "resolve_window_min": 15},
     "signals": {"geofence": {"log_lr": 1.39}, "motion": {"log_lr": 2.08}, "ble": {"log_lr": 2.71},
                 "nfc": {"log_lr": 4.6}, "camera_plate": {"log_lr": 3.91, "fuzzy_log_lr": 1.5},
-                "camera_spot": {"log_lr": 1.1}, "gate_qr": {"log_lr": 5.3}, "car_bt": {"log_lr": 2.08},
+                "camera_spot": {"log_lr": 1.1}, "gate_sensor": {"log_lr": 2.0}, "gate_qr": {"log_lr": 5.3}, "car_bt": {"log_lr": 2.08},
                 "booking_qr": {"definitive": True}, "attendant": {"definitive": True},
                 "driver_confirm": {"definitive": True}},
 }

@@ -120,8 +120,11 @@ def _lot(conn, lot_id: str):
 def overview(lot_id: str, conn=Depends(get_conn)):
     lot = _lot(conn, lot_id)
     t = db.now(conn)
+    from api.ops.fusion import unidentified_exits
+    # Stays include unidentified gate entries (G-…); unidentified gate exits not yet matched to a stay count as gone.
     occupied = conn.execute(f"SELECT COUNT(*) FROM stays WHERE lot_id = ? AND state IN {ACTIVE}",
                             (lot_id,)).fetchone()[0]
+    occupied = max(0, occupied - unidentified_exits(conn, lot_id, t))
     upcoming = conn.execute(
         "SELECT b.* FROM bookings b WHERE b.lot_id = ? AND b.status = 'booked' AND b.end_at > ? AND b.start_at <= ?"
         " AND NOT EXISTS (SELECT 1 FROM stays s WHERE s.booking_id = b.id) ORDER BY b.start_at",
@@ -246,6 +249,7 @@ def do_scan(conn, body: ScanIn) -> dict:
                  (stay_id, booking["id"], booking["lot_id"], booking["space_id"], booking["plate_norm"],
                   db.utc(observed), db.utc(t)))
     stay = conn.execute("SELECT * FROM stays WHERE id = ?", (stay_id,)).fetchone()
+    _claim_gate(conn, booking["lot_id"], "enter", observed, booking["id"], stay_id)
     audit(conn, action="check_in", entity="stay", entity_id=stay_id, lot_id=booking["lot_id"], before=None,
           after=stay_out(stay), observed_at=observed, device_id=body.device_id,
           client_event_id=body.client_event_id)
@@ -254,8 +258,14 @@ def do_scan(conn, body: ScanIn) -> dict:
                                           f"{(db.local(booking['end_at']) or '')[11:16]}.", booking, stay))
 
 
+def _claim_gate(conn, lot_id, kind, at, booking_id, stay_id) -> None:
+    from api.ops.fusion import resolve_gate
+    resolve_gate(conn, lot_id, kind, at, booking_id, stay_id)
+
+
 def _checkout(conn, stay, booking, observed: datetime, device_id, client_event_id, method) -> dict:
     before = stay_out(stay)
+    _claim_gate(conn, stay["lot_id"], "exit", observed, stay["booking_id"], stay["id"])
     now_utc = db.utc(db.now(conn))
     conn.execute("UPDATE stays SET state = 'CHECKED_OUT', out_at = ?, out_method = ?, out_conf = 1.0,"
                  " updated_at = ? WHERE id = ?", (db.utc(observed), method, now_utc, stay["id"]))
@@ -325,6 +335,7 @@ def walk_in(body: WalkInIn, conn=Depends(get_conn)):
         (stay_id, body.lot_id, body.space_id, plate_norm, db.utc(observed), db.utc(now)),
     )
     stay = conn.execute("SELECT * FROM stays WHERE id = ?", (stay_id,)).fetchone()
+    _claim_gate(conn, body.lot_id, "enter", observed, None, stay_id)
     audit(conn, action="walk_in", entity="stay", entity_id=stay_id, lot_id=body.lot_id, before=None,
           after=stay_out(stay), observed_at=observed, device_id=body.device_id,
           client_event_id=body.client_event_id)
@@ -414,7 +425,7 @@ class SignalIn(BaseModel):
     device_id: str
     lot_id: str
     source: Literal["geofence", "motion", "ble", "nfc", "gate_qr", "booking_qr", "camera_plate",
-                    "camera_spot", "car_bt", "attendant", "driver_confirm"]
+                    "camera_spot", "gate_sensor", "car_bt", "attendant", "driver_confirm"]
     kind: Literal["enter", "exit", "park", "unpark", "scan", "occupied", "vacant", "confirm", "deny"]
     observed_at: str
     user_id: str | None = None
@@ -455,6 +466,10 @@ def signals(body: SignalIn | SignalBatch, conn=Depends(get_conn)):
         accepted += cur.rowcount
         if cur.rowcount:
             affected |= {b for b in (s.booking_id, matched) if b}
+            if s.source in ("gate_sensor", "camera_plate"):
+                # Break-beam pair + lane camera: same lot and direction within seconds = one identified car.
+                if paired := fusion.pair_gate(conn, cur.lastrowid):
+                    affected.add(paired)
             if s.source == "camera_plate" and matched is None:
                 affected |= fusion.plate_bookings_elsewhere(conn, payload.get("plate_norm"), s.lot_id, observed)
     conn.commit()
@@ -668,6 +683,7 @@ def refresh_alerts(conn) -> None:
             )
             conn.execute("UPDATE bookings SET status='completed', updated_at=? WHERE id=?",
                          (now_utc, stay["booking_id"]))
+            _claim_gate(conn, stay["lot_id"], "exit", out_at, stay["booking_id"], stay["id"])
             updated = conn.execute("SELECT * FROM stays WHERE id=?", (stay["id"],)).fetchone()
             audit(conn, action="inferred_check_out", entity="stay", entity_id=stay["id"], lot_id=stay["lot_id"],
                   before=before, after=stay_out(updated), observed_at=out_at, actor_type="system")
