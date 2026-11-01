@@ -5,23 +5,25 @@
     uv run python -m edge.sensor_sim --lot-id AUB --also http://localhost:8090/gate   # also wake the plate reader
 
 Each event is validated against contract/schemas/signal.schema.json. `observed_at` comes from the API's
-demo clock (`GET /dev/clock`, default) or real local time (`--clock field`). Failed posts are queued and
-retried with the next event (same `client_event_id`, so the API ignores duplicates). Needs only the
-default install (no edge group).
+demo clock (`GET /dev/clock`, default) or real local time (`--clock field`). A failed post stays on an
+offline queue with the same `client_event_id` and is retried with backoff (INTEGRATION.md §4). The
+ESP32 sketch uses the same rules (`edge/gate_logic.py`). Needs only the default install (no edge group).
 """
 from __future__ import annotations
 
 import argparse
 import itertools
+import json
 import sys
 import time
+import urllib.error
 
-from edge.camera.common import Clock, SignalSink, http_json, make_signal
+from edge.camera.common import Clock, http_json
+from edge.gate_logic import OfflineQueue, build_gate_signal
 
 
 def gate_signal(clock: Clock, kind: str, lot_id: str, gate: int, lane: int) -> dict:
-    return make_signal(device_id=f"gate-{lot_id}-{gate}", lot_id=lot_id, source="gate_sensor", kind=kind,
-                       observed_at=clock.iso(), payload={"gate_id": f"{lot_id}-{gate}", "lane": lane})
+    return build_gate_signal(lot_id=lot_id, gate=gate, lane=lane, kind=kind, observed_at=clock.iso())
 
 
 def main(argv: list[str] | None = None) -> list[dict]:
@@ -40,14 +42,36 @@ def main(argv: list[str] | None = None) -> list[dict]:
     a = ap.parse_args(argv)
 
     clock = Clock(a.clock, a.api)
-    sink = SignalSink(a.api, a.dry_run)
+    queue = OfflineQueue()
+
+    def post(body: dict):
+        try:
+            return 200, http_json("POST", f"{a.api}/signals", body, timeout=5)
+        except urllib.error.HTTPError as exc:
+            return exc.code, None
+
+    def drain() -> None:
+        if a.dry_run:
+            return
+        while True:
+            result = queue.pump(time.monotonic(), post)
+            if result is None or result["result"] == "retry":
+                if result and result["result"] == "retry":
+                    print(f"[sim] queued {result['client_event_id']}, retry with the same id", file=sys.stderr)
+                return
+            if result["result"] == "dropped":
+                print(f"[sim] dropped {result['client_event_id']} (HTTP {result['status']})", file=sys.stderr)
 
     def fire(kind: str) -> dict:
         sig = gate_signal(clock, kind, a.lot_id, a.gate, a.lane)
-        sink.send(sig)
+        if a.dry_run:
+            print(json.dumps(sig, ensure_ascii=False), flush=True)
+        else:
+            queue.push(sig)
+            drain()
         for url in a.also:
             try:
-                http_json("POST", url, sig, timeout=2)
+                http_json("POST", url, sig, timeout=1)
             except Exception as e:
                 print(f"[also] {url}: {e}", file=sys.stderr)
         print(f"[sim] {kind} {sig['payload']['gate_id']} lane {a.lane} at {sig['observed_at']}", file=sys.stderr)
@@ -73,7 +97,7 @@ def main(argv: list[str] | None = None) -> list[dict]:
                     sent.append(fire("enter" if c == "e" else "exit"))
     except KeyboardInterrupt:
         pass
-    sink.flush()
+    drain()
     return sent
 
 

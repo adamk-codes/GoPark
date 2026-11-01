@@ -1,0 +1,47 @@
+# Lane camera for `python -m edge.run_gate`. One Android phone per lot (IP Webcam,
+# 1280×720, quality ~70), straight on, plate height 40–80 cm, 2–4 m before the barrier.
+# `--phone` overrides `phone`. Re-measure `roi` from one /shot.jpg after the phone is mounted:
+# the plate should be at least 200 px wide inside the box.
+defaults:
+  api: http://localhost:8000
+  clock: demo          # `field` when the ESP32 uses NTP; demo reads GET /dev/clock
+  device_id: cam-gate-1
+  kind: auto
+  trigger: api
+  cars: true
+  vehicle_match: true
+  clip_model: openai/clip-vit-base-patch32
+  ocr: auto
+  # 4 fps leaves a 250 ms budget. Fast OCR on this stack was 61–91 ms/frame (edge/README.md),
+  # so 4 is inside that and still gets `--need` 2 agreeing reads while the car is at the beam.
+  fps: 4
+  min_conf: 0.85
+  need: 2
+  window: 5
+  cooldown_s: 120
+  window_s: 8
+  lane: 1
+  gate: 1
+  # x,y,w,h on a 1280×720 frame. Drops sky/ceiling and the side strips. The synthetic gate
+  # frame's closest plate (324 px, centred near (564, 446)) sits inside this box.
+  roi: [160, 240, 960, 440]
+
+lots:
+  AUB:
+    gate: 1
+    lane: 1
+  BDD:
+    gate: 1
+    lane: 1
+  LAU:
+    gate: 1
+    lane: 1
+  HAMRA:
+    gate: 1
+    lane: 1
+  VERDUN:
+    gate: 1
+    lane: 1
+  ACHRAFIEH:
+    gate: 1
+    lane: 1

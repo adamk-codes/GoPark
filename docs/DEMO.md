@@ -82,6 +82,45 @@ only what's uncertain." Detection accuracy over all 674 replayed traces is on th
 (`uv run python -m tools.simulator evaluate` → `runs/fusion_metrics.json`). The Evaluation page's
 *Detection accuracy* section fills in once the API serves that file.
 
+## Live hardware
+
+Use this when an Android phone (IP Webcam) and the ESP32 are on the same Wi-Fi as the laptop. The
+scripted morning above does not need them. If the phone, the board, or the Wi-Fi fails on stage, use
+the fallback at the end of this section and continue with the five minutes.
+
+### Set up
+1. Phone: IP Webcam, **1280×720**, quality ~70, audio off, Prevent sleep, battery optimisation off, on a charger. Start the server. The stream is `http://<PHONE_IP>:8080/video`. Open that URL on the laptop first.
+2. Mount it at plate height (40–80 cm), straight on, 2–4 m before the barrier. The plate should be at least ~200 px wide. The lane crop in `config/gates.yaml` (`roi`) was checked on a 1280×720 gate frame; redo it from one `/shot.jpg` if the phone's framing is different.
+3. ESP32: flash `edge/firmware/gate_sensor/gate_sensor.ino`. Point `API_BASE` at this laptop's port 8000. `CLOCK_MODE 0` (NTP) means the reader uses `--clock field`. `CLOCK_MODE 1` reads `GET /dev/clock` and matches the default demo clock. The two clocks have to agree within a couple of seconds or nothing pairs.
+4. API and dashboard up (`uv run python -m tools.demo`, or leave them running from the rehearsal).
+
+Start the reader:
+
+```bash
+uv run --group edge python -m edge.run_gate --lot-id AUB --phone http://PHONE_IP:8080 --clock field
+```
+
+Ctrl+C stops it.
+
+### What to show
+- One booked car in. Detection log: a `gate_sensor` enter row (log-LR **2.0**) next to `camera_plate`, stay `CHECKED_IN`, method `auto`.
+- Cover the plate and pass again. The stay goes `ARRIVING` with a car-look suggestion. It does not check in. The driver's confirmation message is a separate task; until they answer, an attendant sees "Needs eyes".
+- No plate and no matching look: after the pairing window the car counts in occupancy as identity unknown.
+- One booked car out: `CHECKED_OUT` at that exit second.
+
+### If the hardware or the Wi-Fi fails
+Leave the scripted demo running. In a second terminal, play a recorded clip in real time and post the sensor by hand:
+
+```bash
+uv run --group edge python -m edge.camera.plate_reader --source clip.mp4 --realtime --lot-id AUB --device-id cam-gate-1 --kind auto --trigger listen --listen 127.0.0.1:8090 --cars --vehicle-match --api http://localhost:8000
+```
+
+```bash
+uv run --group edge python -m edge.sensor_sim --lot-id AUB --api http://localhost:8000 --also http://127.0.0.1:8090/gate
+```
+
+Type `e` then Enter as the car reaches the gate in the clip, and `x` when it leaves. A clip for this is `edge/tests/data/gate.mp4` (`uv run --group edge python -m edge.tests.synth`). `run_gate` can play the same file: `--source clip.mp4` instead of `--phone`.
+
 ## Fallbacks
 | If… | Do |
 |---|---|
@@ -91,6 +130,7 @@ only what's uncertain." Detection accuracy over all 674 replayed traces is on th
 | **Port in use** | `uv run python -m tools.demo --api-port 8010 --dash-port 5180` and open the printed URL. |
 | **Something hangs mid-story** | Ctrl+C, rerun the command: it resets the lots and starts over in seconds (data and Rhythm are reused). |
 | **Laptop dies / nothing runs** | Play the backup video, then show the Evaluation numbers from the slides. |
+| **Phone, ESP32, or gate Wi-Fi fails** | Skip live hardware. Use `edge/sensor_sim.py` plus `--source clip.mp4 --realtime` (see Live hardware). |
 | **Evaluation page empty** | `uv run python -m rhythm evaluate`, then reload. |
 
 ## Questions you may get
