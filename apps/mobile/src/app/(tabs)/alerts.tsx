@@ -1,76 +1,82 @@
-import { useCallback, useState } from 'react';
+import { useState } from 'react';
 import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { Badge, Button, Card, ErrorLine, Muted, Section, s } from '../../components/ui';
-import { errorText, hhmm } from '../../lib/format';
-import { useApp } from '../../lib/settings';
-import { useResource } from '../../lib/useResource';
-import type { Alert } from '../../pending-contract';
+import { Badge, Button, Card, Muted, Section, s } from '../../components/ui';
+import type { Alert } from '../../contract';
+import type { ConflictItem } from '../../core/store';
+import { hhmm } from '../../lib/format';
+import { useSync } from '../../lib/sync';
 import { t } from '../../strings';
 import { c, toneColors, type Tone } from '../../theme';
 
-const POLL_MS = 15_000;
-const NEEDS_EYES = new Set<Alert['type']>(['low_confidence', 'anomaly', 'plate_mismatch', 'unconfirmed_departure']);
+// Fusion and sync flag these when a person should look at the car (brief P1 §P2).
+const NEEDS_EYES = new Set<Alert['type']>(['low_confidence', 'anomaly']);
 const severityTone: Record<Alert['severity'], Tone> = { info: 'info', warning: 'warn', critical: 'bad' };
 
-// P0 alerts have no id yet (P2 adds them); fall back to a stable composite key.
-const keyOf = (a: Alert) => a.id ?? `${a.type}|${a.stay_id ?? ''}|${a.booking_id ?? ''}`;
-
 export default function Alerts() {
-  const { api, settings } = useApp();
-  const load = useCallback(() => api.alerts(settings.lotId), [api, settings.lotId]);
-  const { data, error, refreshing, refresh } = useResource(load, `${settings.apiUrl}|${settings.lotId}`, POLL_MS);
-  // Resolved on this phone; hides alerts until the server stops returning them.
-  const [resolved, setResolved] = useState<Set<string>>(new Set());
-  const [busyKey, setBusyKey] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
-
-  const resolve = async (a: Alert) => {
-    const k = keyOf(a);
-    setBusyKey(k);
-    setActionError(null);
-    try {
-      await api.resolveAlert(a);
-      setResolved((prev) => new Set(prev).add(k));
-    } catch (e) {
-      setActionError(errorText(e));
-    } finally {
-      setBusyKey(null);
-    }
+  const engine = useSync();
+  const [refreshing, setRefreshing] = useState(false);
+  const refresh = async () => {
+    setRefreshing(true);
+    await engine.flush();
+    await engine.pull();
+    setRefreshing(false);
   };
 
-  const open = (data ?? []).filter((a) => a.status !== 'resolved' && !resolved.has(keyOf(a)));
+  // From the local cache, so the list works offline; a resolve hides the alert at once and syncs later.
+  const open = [...engine.view().alerts].sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id - a.id);
   const eyes = open.filter((a) => NEEDS_EYES.has(a.type));
   const rest = open.filter((a) => !NEEDS_EYES.has(a.type));
+  const conflicts = engine.conflictItems();
+  const { lastPullAt } = engine.status();
 
   return (
     <ScrollView style={s.screen} contentContainerStyle={s.body}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={c.brand} />}>
-      {error && <ErrorLine text={`${t.common.cantReach(settings.apiUrl)} · ${error}`} />}
-      <ErrorLine text={actionError} />
-      {!data && !error && <Muted>{t.common.loading}</Muted>}
-      {data && open.length === 0 && <Muted>{t.alerts.empty}</Muted>}
+      {lastPullAt === null && <Muted>{t.common.loading}</Muted>}
+      {conflicts.length > 0 && <Section title={t.sync.conflicts} />}
+      {conflicts.map((cf) => <ConflictRow key={cf.id} cf={cf} onDismiss={() => engine.dismissConflict(cf.id)} />)}
+      {lastPullAt !== null && open.length === 0 && conflicts.length === 0 && <Muted>{t.alerts.empty}</Muted>}
       {eyes.length > 0 && <Section title={t.alerts.needsEyes} />}
-      {eyes.map((a) => <AlertRow key={keyOf(a)} a={a} busy={busyKey === keyOf(a)} onResolve={() => resolve(a)} />)}
-      {eyes.length > 0 && rest.length > 0 && <Section title={t.alerts.other} />}
-      {rest.map((a) => <AlertRow key={keyOf(a)} a={a} busy={busyKey === keyOf(a)} onResolve={() => resolve(a)} />)}
+      {eyes.map((a) => <AlertRow key={a.id} a={a} onResolve={() => engine.resolveAlert(a.id)} />)}
+      {rest.length > 0 && (eyes.length > 0 || conflicts.length > 0) && <Section title={t.alerts.other} />}
+      {rest.map((a) => <AlertRow key={a.id} a={a} onResolve={() => engine.resolveAlert(a.id)} />)}
     </ScrollView>
   );
 }
 
-function AlertRow({ a, busy, onResolve }: { a: Alert; busy: boolean; onResolve: () => void }) {
+function AlertRow({ a, onResolve }: { a: Alert; onResolve: () => void }) {
   const tone = toneColors[severityTone[a.severity]];
   return (
     <Card style={[st.card, { borderStartColor: tone.fg }]}>
       <View style={s.row}>
         <Badge label={t.alerts.types[a.type] ?? a.type} fg={tone.fg} bg={tone.bg} />
-        {a.fee_usd != null && <Badge label={t.alerts.fee(a.fee_usd)} fg={c.warn} bg={c.warnSoft} />}
+        {a.estimated_fee != null && <Badge label={t.alerts.fee(a.estimated_fee)} fg={c.warn} bg={c.warnSoft} />}
         <View style={s.flex} />
         <Text style={s.mono}>{hhmm(a.created_at)}</Text>
       </View>
       <Text style={st.msg}>{a.message}</Text>
-      {a.type !== 'upcoming_arrival' && (
-        <Button kind="secondary" label={t.alerts.resolve} busy={busy} onPress={onResolve} />
-      )}
+      {(a.booking_id || a.stay_id) && <Muted>{[a.booking_id, a.stay_id].filter(Boolean).join(' · ')}</Muted>}
+      {a.type !== 'upcoming_arrival' && <Button kind="secondary" label={t.alerts.resolve} onPress={onResolve} />}
+    </Card>
+  );
+}
+
+// An offline action the server refused (e.g. a scan for a booking that was already checked out).
+function ConflictRow({ cf, onDismiss }: { cf: ConflictItem; onDismiss: () => void }) {
+  const { event } = cf;
+  const { booking_id, plate, stay_id, alert_id } = event.body;
+  const subject = booking_id ?? plate ?? stay_id ?? (alert_id != null ? `#${alert_id}` : null);
+  return (
+    <Card style={[st.card, { borderStartColor: c.bad }]}>
+      <View style={s.row}>
+        <Badge label={t.sync.conflict} fg={c.bad} bg={c.badSoft} />
+        <Badge label={t.sync.eventTypes[event.type] ?? event.type} fg={c.muted} bg={c.border} />
+        <View style={s.flex} />
+        <Text style={s.mono}>{hhmm(event.observed_at)}</Text>
+      </View>
+      <Text style={st.msg}>{cf.reason}</Text>
+      {subject != null && <Muted>{String(subject)}</Muted>}
+      <Button kind="secondary" label={t.sync.dismiss} onPress={onDismiss} />
     </Card>
   );
 }
