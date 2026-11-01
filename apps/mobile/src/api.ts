@@ -1,18 +1,44 @@
-import type { AuditEntry, Lot, LotOverview, ScanResult, Stay } from './contract';
 import type {
-  Alert, BookingQr, Health, QrPublicKey, ResolveAlertRequest, Rewards, WalkInRequest,
-} from './pending-contract';
+  Alert, AuditEntry, Booking, BookingQr, Lot, LotOverview, QrPublicKey, ScanResult, Stay, SyncEvent,
+} from './contract';
 
 // Default server; Settings can override it. Put EXPO_PUBLIC_API_URL=http://<laptop-LAN-IP>:8000 in apps/mobile/.env.
 export const DEFAULT_API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8000';
-// Endpoints P2 is still building are mocked on the phone while this is on (EXPO_PUBLIC_MOCK_PENDING=0 turns it off).
-export const DEFAULT_MOCK_PENDING = process.env.EXPO_PUBLIC_MOCK_PENDING !== '0';
+// Dev-only: EXPO_PUBLIC_DEV_MOCKS=1 lets endpoints that are still stubs (404/405/501) answer with a mock.
+export const DEFAULT_DEV_MOCKS = process.env.EXPO_PUBLIC_DEV_MOCKS === '1';
+
+// Shapes the API returns that contract/types.ts doesn't list yet (from api/ops/routes.py on main).
+// TODO(P2): move these into contract/types.ts.
+export interface Health {
+  ok: boolean;
+  now: string;
+  version: string;
+}
+
+export interface Rewards {
+  user_id: string;
+  points: number;
+  grace_minutes: number;
+  tier: string;
+}
+
+export interface SyncPull {
+  cursor: string;
+  bookings: Booking[];
+  stays: Stay[];
+  alerts: Alert[];
+}
+
+export interface SyncPushResult {
+  acks: string[];
+  conflicts: { id: string; reason: string }[];
+  results?: Record<string, ScanResult | Alert>;
+}
 
 export interface ApiConfig {
   baseUrl: string;
   deviceId: string;
-  mockPending: boolean;
-  newId: () => string; // client_event_id generator (UUIDv7 in the app)
+  devMocks: boolean;
   timeoutMs?: number;
 }
 
@@ -26,7 +52,7 @@ export class ApiError extends Error {
   }
 }
 
-// A response from an endpoint that may still be mocked: `mocked` tells the UI to say so.
+// A response from an endpoint that may be mocked in dev: `mocked` tells the UI to say so.
 export interface Maybe<T> {
   data: T;
   mocked: boolean;
@@ -34,7 +60,7 @@ export interface Maybe<T> {
 
 export type ScanInput = { qr: string } | { booking_id: string } | { plate: string };
 
-// Status codes that mean "P2 hasn't shipped this endpoint yet".
+// Status codes that mean "this endpoint is still a stub".
 const NOT_BUILT = new Set([404, 405, 501]);
 
 export function createApi(cfg: ApiConfig) {
@@ -58,95 +84,42 @@ export function createApi(cfg: ApiConfig) {
 
   const post = <T>(path: string, body: unknown) => call<T>(path, { method: 'POST', body: JSON.stringify(body) });
 
-  // Try the real endpoint; fall back to the mock only when it isn't built yet (and mocks are on).
-  async function pending<T>(real: () => Promise<T>, mock: () => T): Promise<Maybe<T>> {
+  // Try the real endpoint; fall back to the mock only for a stub endpoint, and only with dev mocks on.
+  async function stub<T>(real: () => Promise<T>, mock: () => T): Promise<Maybe<T>> {
     try {
       return { data: await real(), mocked: false };
     } catch (e) {
-      if (cfg.mockPending && e instanceof ApiError && NOT_BUILT.has(e.status)) return { data: mock(), mocked: true };
+      if (cfg.devMocks && e instanceof ApiError && NOT_BUILT.has(e.status)) return { data: mock(), mocked: true };
       throw e;
     }
   }
 
+  const q = encodeURIComponent;
+
   return {
     health: () => call<Health>('/health'),
     lots: () => call<Lot[]>('/lots'),
-    overview: (lot: string) => call<LotOverview>(`/lots/${encodeURIComponent(lot)}/overview`),
-    stays: (lot: string, state?: string) =>
-      call<Stay[]>(`/stays?lot_id=${encodeURIComponent(lot)}${state ? `&state=${state}` : ''}`),
-    audit: (lot: string, limit = 50) => call<AuditEntry[]>(`/audit?lot_id=${encodeURIComponent(lot)}&limit=${limit}`),
-    alerts: (lot: string) => call<Alert[]>(`/alerts?lot_id=${encodeURIComponent(lot)}`),
-    rewards: (userId: string) => call<Rewards>(`/users/${encodeURIComponent(userId)}/rewards`),
+    overview: (lot: string) => call<LotOverview>(`/lots/${q(lot)}/overview`),
+    audit: (lot: string, limit = 50) => call<AuditEntry[]>(`/audit?lot_id=${q(lot)}&limit=${limit}`),
+    qrKey: () => call<QrPublicKey>('/keys/qr'),
+    bookingQr: (bookingId: string) => call<BookingQr>(`/bookings/${q(bookingId)}/qr`),
+    rewards: (userId: string) => stub(() => call<Rewards>(`/users/${q(userId)}/rewards`),
+      (): Rewards => ({ user_id: userId, points: 0, grace_minutes: 0, tier: 'none' })),
 
-    scan: (lot: string, input: ScanInput) =>
-      post<ScanResult>('/scan', { lot_id: lot, device_id: cfg.deviceId, client_event_id: cfg.newId(), ...input }),
-
-    checkout: (stayId: string) =>
-      post<ScanResult>(`/stays/${encodeURIComponent(stayId)}/checkout`, {
-        device_id: cfg.deviceId, client_event_id: cfg.newId(), method: 'attendant',
-      }),
-
-    // TODO(P2): POST /walk_ins. Mock: a local walk-in stay, not stored on the server.
-    walkIn: (lot: string, plate: string, spaceId?: string | null) => {
-      const body: WalkInRequest = {
-        lot_id: lot, plate, device_id: cfg.deviceId, client_event_id: cfg.newId(), space_id: spaceId ?? null,
-      };
-      return pending(() => post<ScanResult>('/walk_ins', body), () => mockWalkIn(body));
-    },
-
-    // TODO(P2): POST /alerts/{id}/resolve. Mock: echo the alert back as resolved.
-    resolveAlert: (alert: Alert, note?: string) => {
-      const body: ResolveAlertRequest = { device_id: cfg.deviceId, client_event_id: cfg.newId(), note: note ?? null };
-      const mock = (): Alert => ({ ...alert, status: 'resolved', resolved_by: cfg.deviceId, note: note ?? null });
-      if (!alert.id) return Promise.resolve({ data: mock(), mocked: true });
-      return pending(() => post<Alert>(`/alerts/${encodeURIComponent(alert.id!)}/resolve`, body), mock);
-    },
-
-    // TODO(P2): GET /keys/qr. Cached for offline QR checks in phase P2.
-    qrKey: () => pending(() => call<QrPublicKey>('/keys/qr'),
-      (): QrPublicKey => ({ format: 'GP1', alg: 'Ed25519', kid: 'mock', public_key: '' })),
-
-    // TODO(P2): GET /bookings/{id}/qr. Mock: an unsigned GP1 string the server will reject as invalid_qr.
-    bookingQr: (bookingId: string, lot: string) =>
-      pending(() => call<BookingQr>(`/bookings/${encodeURIComponent(bookingId)}/qr`), () => mockBookingQr(bookingId, lot)),
+    // Attendant actions go through the outbox (src/core/sync.ts), never straight to /scan etc.
+    syncPull: (lot: string, since?: string | null) =>
+      call<SyncPull>(`/sync/pull?lot_id=${q(lot)}${since ? `&since=${q(since)}` : ''}`),
+    syncPush: (events: SyncEvent[]) => post<SyncPushResult>('/sync/push', { device_id: cfg.deviceId, events }),
   };
 }
 
 export type Api = ReturnType<typeof createApi>;
 
-function normPlate(p: string) {
-  const arabic = '٠١٢٣٤٥٦٧٨٩';
-  return p.toUpperCase().replace(/[٠-٩]/g, (d) => String(arabic.indexOf(d))).replace(/[\s-]/g, '');
-}
-
-function mockWalkIn(b: WalkInRequest): ScanResult {
-  return {
-    result: 'checked_in',
-    message: `Checked in walk-in ${b.plate.toUpperCase()} at ${b.lot_id}.`,
-    booking: null,
-    stay: {
-      id: `W-${b.client_event_id}`, booking_id: null, lot_id: b.lot_id, plate_norm: normPlate(b.plate),
-      state: 'CHECKED_IN', in_at: null, in_method: 'attendant', in_conf: 1, out_at: null, out_method: null,
-      out_conf: null, inferred: false,
-    },
-    suggest: null,
-  };
-}
-
-function b64url(s: string) {
-  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-function mockBookingQr(bookingId: string, lot: string): BookingQr {
-  const payload = b64url(JSON.stringify({ bid: bookingId, lot, ph: '', s: '', e: '', n: 'mock0000' }));
-  return { booking_id: bookingId, qr: `GP1.${payload}.mock`, valid_from: '', valid_until: '' };
-}
-
 // What a typed or scanned string means: a signed booking QR, a booking ID, or a plate.
 export function classifyInput(raw: string): ScanInput | null {
   const s = raw.trim();
   if (!s) return null;
-  // GPG1 gate codes are for drivers; send them as qr too so the server answers invalid_qr, not not_found.
+  // GPG1 gate codes are for drivers; treat them as qr so they read as invalid_qr, not not_found.
   if (/^GPG?1\./.test(s)) return { qr: s };
   if (/^B\d{3,}$/i.test(s)) return { booking_id: s.toUpperCase() };
   return { plate: s };

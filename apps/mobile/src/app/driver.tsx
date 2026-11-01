@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { ScrollView, Text, TextInput, View } from 'react-native';
 import { Button, Card, ErrorLine, Muted, s } from '../components/ui';
-import { errorText, hhmm } from '../lib/format';
+import { errorText } from '../lib/format';
 import { useApp } from '../lib/settings';
-import type { BookingQr, Rewards } from '../pending-contract';
+import type { Rewards } from '../api';
+import type { BookingQr } from '../contract';
 import { t } from '../strings';
 import { c } from '../theme';
 
@@ -12,8 +13,8 @@ export default function Driver() {
   const { api, settings, update } = useApp();
   const [userId, setUserId] = useState(settings.driverUserId);
   const [bookingId, setBookingId] = useState('');
-  const [rewards, setRewards] = useState<Rewards | null>(null);
-  const [qr, setQr] = useState<{ data: BookingQr; mocked: boolean } | null>(null);
+  const [rewards, setRewards] = useState<{ data: Rewards; mocked: boolean } | null>(null);
+  const [qr, setQr] = useState<BookingQr | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<'rewards' | 'qr' | null>(null);
 
@@ -34,7 +35,7 @@ export default function Driver() {
     setBusy('qr');
     setError(null);
     try {
-      setQr(await api.bookingQr(bookingId.trim().toUpperCase(), settings.lotId));
+      setQr(await api.bookingQr(bookingId.trim().toUpperCase()));
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -54,11 +55,11 @@ export default function Driver() {
       </View>
       {rewards && (
         <Card>
-          <Text style={s.label}>{t.driver.rewards}</Text>
+          <Text style={s.label}>{t.driver.rewards}{rewards.mocked ? ` (${t.common.mock})` : ''}</Text>
           <View style={s.row}>
-            <Stat value={String(rewards.points)} label={t.driver.points} />
-            <Stat value={String(rewards.grace_minutes)} label={t.driver.grace} />
-            <Stat value={rewards.tier} label={t.driver.tier} />
+            <Stat value={String(rewards.data.points)} label={t.driver.points} />
+            <Stat value={String(rewards.data.grace_minutes)} label={t.driver.grace} />
+            <Stat value={rewards.data.tier} label={t.driver.tier} />
           </View>
         </Card>
       )}
@@ -71,9 +72,8 @@ export default function Driver() {
       </View>
       {qr && (
         <Card>
-          <Text style={s.label}>{t.driver.qrString}{qr.mocked ? ` (${t.common.mock})` : ''}</Text>
-          <Text selectable style={{ fontFamily: 'monospace', color: c.text }}>{qr.data.qr}</Text>
-          {qr.data.valid_from ? <Muted>{t.driver.validFrom(hhmm(qr.data.valid_from), hhmm(qr.data.valid_until))}</Muted> : null}
+          <Text style={s.label}>{t.driver.qrString}</Text>
+          <Text selectable style={{ fontFamily: 'monospace', color: c.text }}>{qr.qr}</Text>
         </Card>
       )}
       <ErrorLine text={error} />
