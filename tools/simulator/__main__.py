@@ -39,6 +39,8 @@ def _filters(p: argparse.ArgumentParser) -> None:
     p.add_argument("--until", help="bookings starting before this ISO time")
     p.add_argument("--limit", type=int, help="first N bookings after filtering")
     p.add_argument("--tick-min", type=float, default=2.0, help="demo minutes between /dev/tick calls (0 = none)")
+    p.add_argument("--driver-confirm", type=float, default=0.0, metavar="P",
+                   help="share of drivers answering an 'arrived?' prompt 1-5 min later, truthfully (default 0)")
     p.add_argument("--gate-sensors", action="store_true",
                    help="synthesize gate_sensor enter/exit events next to the plate reads (traces lack them)")
 
@@ -79,10 +81,10 @@ def cmd_replay(args) -> None:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         with rp.local_client(db_path, _data_dir(args.data)) as client:
             records = rp.replay(client, traces, speed=args.speed, tick_min=args.tick_min,
-                                reset=not args.no_reset, progress=_progress)
+                                reset=not args.no_reset, progress=_progress, driver_confirm=args.driver_confirm)
     else:
         records = rp.replay(rp.HttpClient(args.url), traces, speed=args.speed, tick_min=args.tick_min,
-                            reset=not args.no_reset, progress=_progress)
+                            reset=not args.no_reset, progress=_progress, driver_confirm=args.driver_confirm)
     out = Path(args.out) if args.out else _runs_dir() / "sim_decisions.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(records, indent=1), encoding="utf-8")
@@ -108,10 +110,11 @@ def cmd_evaluate(args) -> None:
         def run(cfg: dict, label: str) -> list[dict]:
             started = time.time()
             if args.offline:
-                records = [ev.emulate(t, cfg, priors) for t in traces]
+                records = [ev.emulate(t, cfg, priors, args.driver_confirm) for t in traces]
             else:
                 fusion.use_config(cfg)
-                records = rp.replay(client, traces, tick_min=args.tick_min, progress=_progress)
+                records = rp.replay(client, traces, tick_min=args.tick_min, progress=_progress,
+                                    driver_confirm=args.driver_confirm)
             for r in records:
                 r["false_evidence_confirm"] = ev.false_evidence_confirm(by_id[r["booking_id"]], r, cfg, priors)
             print(f"{label}: {len(records)} bookings in {time.time() - started:.0f}s", file=sys.stderr)
@@ -120,7 +123,7 @@ def cmd_evaluate(args) -> None:
         before_records = run(before, "before")
         result = {"generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                   "mode": "offline" if args.offline else "replay", "traces": str(data_dir / "traces"),
-                  "gate_sensors": bool(args.gate_sensors),
+                  "gate_sensors": bool(args.gate_sensors), "driver_confirm": args.driver_confirm,
                   "bookings": len(traces), "priors": len(priors),
                   "split": {"method": "sha1(booking_id)[0] % 2 (even = tune)",
                             "tune": sum(ev.split_of(t.booking_id) == "tune" for t in traces),
@@ -153,7 +156,8 @@ def table(result: dict) -> str:
     def row(name, m):
         d = m["departure"]
         f = lambda v: "-" if v is None else f"{v:.2f}" if isinstance(v, float) else str(v)  # noqa: E731
-        return (f"| {name} | {m['bookings']} | {f(m['auto_confirm_rate'])} | {f(m['ask_driver_rate'])} | "
+        return (f"| {name} | {m['bookings']} | {f(m['auto_confirm_rate'])} | {f(m['driver_confirm_rate'])} | "
+                f"{f(m['ask_driver_rate'])} | "
                 f"{f(m['missed_arrival_rate'])} | {f(m['false_confirm_rate'])} | {f(m['median_time_to_confirm_min'])} | "
                 f"{f(d['auto_checkout_rate'])} | {f(d['inferred_checkout_rate'])} | {f(d['median_out_at_error_min'])} | "
                 f"{m['low_confidence_alerts']} | {m['anomaly_alerts']} |")
@@ -163,8 +167,8 @@ def table(result: dict) -> str:
         if not rep:
             continue
         lines += [f"\n{label} ({result['mode']})",
-                  "| group | n | auto | ask | missed | false confirm | median ttc min | auto out | inferred out | "
-                  "out err min | low conf | anomaly |", "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+                  "| group | n | auto | driver | ask | missed | false confirm | median ttc min | auto out | inferred out | "
+                  "out err min | low conf | anomaly |", "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
         lines += [row("all", rep["all"]), row("test split", rep["test"])]
         lines += [row(k, m) for k, m in rep["by_scenario"].items()]
         lines += [row(f"kind: {k}", m) for k, m in rep["by_lot_kind"].items()]

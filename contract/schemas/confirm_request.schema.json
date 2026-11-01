@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "confirm_request",
+  "type": "object",
+  "properties": {
+    "device_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "client_event_id": {
+      "type": "string",
+      "minLength": 8
+    },
+    "answer": {
+      "enum": [
+        "arrived",
+        "not_me",
+        "left"
+      ]
+    },
+    "observed_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "device_id",
+    "client_event_id",
+    "answer"
+  ],
+  "additionalProperties": false
+}

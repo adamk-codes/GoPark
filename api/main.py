@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api import db
 from api.ops import fusion
+from api.ops.driver import router as driver_router
 from api.ops.live import router as live_router
 from api.ops.routes import refresh_alerts, router as ops_router
 from api.rhythm_api.routes import router as rhythm_router
@@ -53,4 +54,5 @@ app = FastAPI(title="GoPark Sense API", version="0.1.0-p1", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 app.include_router(ops_router)
 app.include_router(live_router)
+app.include_router(driver_router)
 app.include_router(rhythm_router)

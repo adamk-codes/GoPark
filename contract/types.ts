@@ -240,3 +240,73 @@ export interface UserRhythm {
   history: Booking[];
   heatmap: number[][]; // [weekday 0=Mon..6][hour 0..23] booking counts
 }
+
+// Driver mode (P3): one-tap confirm, pending confirmations, rewards (CONTRACT.md §7).
+export type ConfirmAnswer = "arrived" | "not_me" | "left";
+
+export interface ConfirmRequest {
+  device_id: string;
+  client_event_id: string;
+  answer: ConfirmAnswer;
+  observed_at?: ISOTime;
+}
+
+export interface ConfirmResult {
+  result: "checked_in" | "checked_out" | "rejected" | "disputed" | "already";
+  message: string;
+  stay: Stay | null;
+  points_awarded: number;
+}
+
+export interface PendingConfirmation {
+  stay: Stay;
+  booking: Booking;
+  question: "arrived" | "left";
+  p: number | null; // fused arrival probability of an ARRIVING stay
+  asked_at: ISOTime;
+}
+
+export interface Perk {
+  id: string;
+  name: string;
+  description: string;
+  unlocked: boolean;
+}
+
+export interface RewardEntry {
+  at: ISOTime;
+  points: number;
+  reason: "confirm_arrival" | "confirm_departure" | "on_time_arrival" | "clean_week";
+  label: string;
+}
+
+export interface Rewards {
+  user_id: string;
+  points: number;
+  streak_weeks: number;
+  grace_minutes: number;
+  tier: "standard" | "verified";
+  perks: Perk[];
+  history: RewardEntry[]; // newest first, up to 50
+}
+
+// GET /signals?lot_id=&source=&since=&after_id=&limit= (oldest first; poll with after_id = cursor).
+export interface StoredSignal {
+  id: number;
+  client_event_id: string;
+  device_id: string;
+  user_id: string | null;
+  lot_id: string;
+  booking_id: string | null;
+  matched_booking_id: string | null; // booking a camera / paired gate event was attributed to
+  source: SignalSource;
+  kind: SignalKind;
+  observed_at: ISOTime;
+  received_at: ISOTime;
+  payload: Record<string, unknown>;
+}
+
+export interface SignalList {
+  signals: StoredSignal[];
+  cursor: number; // id of the last signal returned (or the after_id sent); pass it back as after_id
+}

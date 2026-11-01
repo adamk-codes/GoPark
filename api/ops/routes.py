@@ -127,7 +127,7 @@ def overview(lot_id: str, conn=Depends(get_conn)):
     occupied = max(0, occupied - unidentified_exits(conn, lot_id, t))
     upcoming = conn.execute(
         "SELECT b.* FROM bookings b WHERE b.lot_id = ? AND b.status = 'booked' AND b.end_at > ? AND b.start_at <= ?"
-        " AND NOT EXISTS (SELECT 1 FROM stays s WHERE s.booking_id = b.id) ORDER BY b.start_at",
+        " AND NOT EXISTS (SELECT 1 FROM stays s WHERE s.booking_id = b.id AND s.state != 'EXPECTED') ORDER BY b.start_at",
         (lot_id, db.utc(t), db.utc(t + timedelta(minutes=60)))).fetchall()
     reserved = len(upcoming)
 
@@ -478,6 +478,37 @@ def signals(body: SignalIn | SignalBatch, conn=Depends(get_conn)):
     return {"accepted": accepted, "duplicates": len(items) - accepted}
 
 
+@router.get("/signals")
+def list_signals(lot_id: str | None = None, source: str | None = None, since: str | None = None,
+                 after_id: int | None = None, limit: int = 100, conn=Depends(get_conn)):
+    """Stored signals, oldest first, for edge devices and debugging (CONTRACT.md §7).
+
+    With `after_id` (the previous response's `cursor`): the next `limit` signals after it. Without it:
+    the newest `limit` (so `limit=1` gives the latest id to start polling from). `since` filters on
+    observed_at."""
+    limit = max(1, min(limit, 1000))
+    q, args = "SELECT * FROM signals WHERE 1=1", []
+    if lot_id:
+        q, args = q + " AND lot_id = ?", args + [lot_id]
+    if source:
+        q, args = q + " AND source = ?", args + [source]
+    if since:
+        try:
+            q, args = q + " AND observed_at >= ?", args + [db.utc(db.parse(since))]
+        except ValueError as exc:
+            raise HTTPException(422, "since must be an ISO 8601 timestamp") from exc
+    if after_id is not None:
+        rows = conn.execute(q + " AND id > ? ORDER BY id LIMIT ?", args + [after_id, limit]).fetchall()
+    else:
+        rows = conn.execute(q + " ORDER BY id DESC LIMIT ?", args + [limit]).fetchall()[::-1]
+    out = [{"id": r["id"], "client_event_id": r["client_event_id"], "device_id": r["device_id"],
+            "user_id": r["user_id"], "lot_id": r["lot_id"], "booking_id": r["booking_id"],
+            "matched_booking_id": r["matched_booking_id"], "source": r["source"], "kind": r["kind"],
+            "observed_at": db.local(r["observed_at"]), "received_at": db.local(r["received_at"]),
+            "payload": json.loads(r["payload"] or "{}")} for r in rows]
+    return {"signals": out, "cursor": out[-1]["id"] if out else (after_id or 0)}
+
+
 # ---------- sync (basic) ----------
 class SyncEventIn(BaseModel):
     client_event_id: str
@@ -632,7 +663,7 @@ def refresh_alerts(conn) -> None:
 
     upcoming = conn.execute(
         "SELECT b.* FROM bookings b WHERE b.status = 'booked' AND b.start_at BETWEEN ? AND ? "
-        "AND NOT EXISTS (SELECT 1 FROM stays s WHERE s.booking_id = b.id) ORDER BY b.start_at",
+        "AND NOT EXISTS (SELECT 1 FROM stays s WHERE s.booking_id = b.id AND s.state != 'EXPECTED') ORDER BY b.start_at",
         (now_utc, soon),
     ).fetchall()
     upcoming_ids = {b["id"] for b in upcoming}
@@ -695,7 +726,7 @@ def refresh_alerts(conn) -> None:
 
     no_shows = conn.execute(
         "SELECT b.* FROM bookings b WHERE b.status = 'booked' AND b.end_at < ? "
-        "AND NOT EXISTS (SELECT 1 FROM stays s WHERE s.booking_id = b.id)", (now_utc,),
+        "AND NOT EXISTS (SELECT 1 FROM stays s WHERE s.booking_id = b.id AND s.state != 'EXPECTED')", (now_utc,),
     ).fetchall()
     for booking in no_shows:
         conn.execute("UPDATE bookings SET status = 'no_show', updated_at = ? WHERE id = ?",
@@ -736,21 +767,6 @@ def resolve_alert(alert_id: int, body: ResolveAlertIn, conn=Depends(get_conn)):
               observed_at=now, device_id=body.device_id, actor_type="attendant")
         conn.commit()
     return alert_out(conn.execute("SELECT * FROM alerts WHERE id = ?", (alert_id,)).fetchone())
-
-
-# ---------- not built yet ----------
-@router.post("/stays/{stay_id}/confirm")
-def confirm(stay_id: str):
-    raise HTTPException(501, "Driver confirmation is not built yet (phase P3).")
-
-
-@router.get("/users/{user_id}/rewards")
-def rewards(user_id: str, conn=Depends(get_conn)):
-    pts = conn.execute("SELECT COALESCE(SUM(delta), 0) FROM points_ledger WHERE user_id = ?", (user_id,)).fetchone()[0]
-    tier = conn.execute("SELECT tier FROM users WHERE id = ?", (user_id,)).fetchone()
-    if tier is None:
-        raise HTTPException(404, f"Unknown user {user_id}")
-    return {"user_id": user_id, "points": pts, "grace_minutes": 0, "tier": tier["tier"]}
 
 
 @router.get("/keys/qr")

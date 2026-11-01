@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "confirm_result",
+  "type": "object",
+  "properties": {
+    "result": {
+      "enum": [
+        "checked_in",
+        "checked_out",
+        "rejected",
+        "disputed",
+        "already"
+      ]
+    },
+    "message": {
+      "type": "string"
+    },
+    "stay": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "points_awarded": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "result",
+    "message",
+    "stay",
+    "points_awarded"
+  ],
+  "additionalProperties": false
+}

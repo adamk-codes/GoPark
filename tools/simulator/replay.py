@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from datetime import timedelta
 from pathlib import Path
 
-from tools.simulator.timeline import Step, Trace, build_timeline, parse
+from tools.simulator.timeline import Step, Trace, build_timeline, driver_answer, parse
 
 
 class HttpClient:
@@ -52,19 +52,38 @@ def _ok(response):
 
 
 def replay(client, traces: list[Trace], *, speed: float = 0.0, tick_min: float = 2.0, reset: bool = True,
-           progress=None) -> list[dict]:
-    """Play `traces` into the API and return one decision record per booking (see `record`)."""
+           progress=None, driver_confirm: float = 0.0) -> list[dict]:
+    """Play `traces` into the API and return one decision record per booking (see `record`).
+
+    `driver_confirm` = share of drivers who answer an "arrived?" prompt (ARRIVING stay) 1-5 min later,
+    truthfully ("arrived", or "not_me" for a no-show), through POST /stays/{id}/confirm."""
     steps = build_timeline(traces, tick_min=tick_min)
     if reset:
         _ok(client.post("/dev/reset", params={"prepark": "false"}))
+    arrives = {t.booking_id: t.arrives for t in traces}
+    asked: set[str] = set()
+    answers: list[tuple] = []   # (when, stay_id, answer), sorted
     last = None
     for i, step in enumerate(steps):
         if speed > 0 and last is not None:
             time.sleep(max(0.0, (step.at - last).total_seconds() / speed))
         last = step.at
+        while answers and answers[0][0] <= step.at:
+            when, stay_id, answer = answers.pop(0)
+            _ok(client.post("/dev/clock", json={"now": when.isoformat()}))
+            if stay_id not in {s["id"] for s in _ok(client.get("/stays", params={"state": "ARRIVING"}))}:
+                continue   # settled before the prompt was answered
+            _ok(client.post(f"/stays/{stay_id}/confirm", json={
+                "device_id": "sim-driver", "client_event_id": f"sim-confirm-{stay_id}", "answer": answer}))
         _ok(client.post("/dev/clock", json={"now": step.at.isoformat()}))
         if step.signals:
             _ok(client.post("/signals", json={"signals": step.signals}))
+            if driver_confirm > 0:
+                for stay in _ok(client.get("/stays", params={"state": "ARRIVING"})):
+                    if stay["booking_id"] in arrives and stay["id"] not in asked:
+                        asked.add(stay["id"])
+                        if due := driver_answer(stay["booking_id"], arrives[stay["booking_id"]], step.at, driver_confirm):
+                            answers = sorted(answers + [(due[0], stay["id"], due[1])], key=lambda a: a[0])
         else:
             _ok(client.post("/dev/tick"))
         if progress and i % 500 == 0:

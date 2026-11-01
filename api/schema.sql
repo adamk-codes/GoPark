@@ -146,6 +146,8 @@ CREATE TABLE IF NOT EXISTS points_ledger (
   ref_event_id TEXT,
   created_at TEXT NOT NULL
 );
+-- One award per event (api/ops/rewards.py): rescanning never double-counts.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_points_ref ON points_ledger(user_id, ref_event_id);
 
 CREATE TABLE IF NOT EXISTS meta (
   key TEXT PRIMARY KEY,

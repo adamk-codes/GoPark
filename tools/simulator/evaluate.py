@@ -15,7 +15,7 @@ import statistics
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from tools.simulator.timeline import Trace, parse, send_time
+from tools.simulator.timeline import Trace, driver_answer, parse, send_time
 
 EARLY_MIN = 10   # a confirm/checkout this long before the real event counts as wrong
 OBJECTIVE = ("auto_confirm_rate - 10*false_confirm_rate - 5*early_confirm_rate "
@@ -56,17 +56,18 @@ def _signals(trace: Trace) -> list[tuple[datetime, dict]]:
     return out
 
 
-def emulate(trace: Trace, cfg: dict, priors: list[dict]) -> dict:
+def emulate(trace: Trace, cfg: dict, priors: list[dict], driver_confirm: float = 0.0) -> dict:
     """Decision record for one trace, as `replay.record` would give, without the API."""
     from api.ops import fusion
     stay = None
     rec = {"arriving_at": None, "confirmed_at": None, "checked_out_at": None, "check_out_action": None,
            "in_at": None, "out_at": None, "in_method": None, "alerts": []}
     signals = _signals(trace)
-    times = sorted({at for at, _ in signals})
     infer_at = trace.end + timedelta(minutes=30)
     received: list[dict] = []
-    for at in times + [None]:
+    asked = False
+    while True:
+        at = min((t for t, _ in signals), default=None)
         if stay and stay["state"] in fusion.OPEN and (at is None or at > infer_at):
             # Silent departure, as refresh_alerts + fusion.inferred_departure do it.
             exits = [s["observed_at"] for s in received if s["kind"] in fusion.DEPARTURE_POSITIVE
@@ -76,15 +77,32 @@ def emulate(trace: Trace, cfg: dict, priors: list[dict]) -> dict:
                        check_out_action="inferred_check_out")
         if at is None:
             break
-        received += [s for t, s in signals if t == at]
+        batch = [s for t, s in signals if t == at]
+        signals = [(t, s) for t, s in signals if t != at]
+        if not (stay and stay["state"] == "ARRIVING"):
+            batch = [s for s in batch if s["source"] != "driver_confirm"]   # settled before the answer
+            if not batch:
+                continue
+        received += batch
         prior = fusion.prior_for(trace.user_id, trace.lot_id, at, priors, cfg)
         d = fusion.decide(stay, received, at, prior, cfg)
+        driver = any(s["source"] == "driver_confirm" for s in batch)
+        if driver and any(s["kind"] == "deny" for s in batch) and stay and stay["state"] == "ARRIVING":
+            stay = None   # "not me": back to EXPECTED
+            rec["in_at"] = rec["in_method"] = None
         if d["arrival"]:
             stay = {"state": d["state"], "in_at": d["in_at"], "inferred": False}
-            rec["in_at"], rec["in_method"] = d["in_at"], "auto"
+            rec["in_at"] = d["in_at"]
+            rec["in_method"] = "driver" if driver and d["arrival"] == "check_in" else "auto"
             rec["arriving_at"] = rec["arriving_at"] or at
             if d["arrival"] == "check_in":
                 rec["confirmed_at"] = at
+            elif not asked:
+                asked = True
+                if due := driver_answer(trace.booking_id, trace.arrives, at, driver_confirm):
+                    signals.append((due[0], {"id": f"confirm-{trace.booking_id}", "source": "driver_confirm",
+                                             "kind": "confirm" if due[1] == "arrived" else "deny", "lot_id": trace.lot_id,
+                                             "observed_at": due[0], "elsewhere": False, "fuzzy": False, "truth": True}))
         if d["contradiction"] and "anomaly" not in rec["alerts"]:
             rec["alerts"].append("anomaly")
         if d["departure"]:
@@ -135,7 +153,8 @@ def metrics(records: list[dict]) -> dict:
     arrivals = [r for r in records if r["arrives"]]
     no_shows = [r for r in records if not r["arrives"]]
     auto = [r for r in arrivals if r["confirmed_at"] and r["in_method"] == "auto"]
-    asked = [r for r in arrivals if r not in auto and r["arriving_at"]]
+    by_driver = [r for r in arrivals if r["confirmed_at"] and r["in_method"] == "driver"]
+    asked = [r for r in arrivals if r not in auto and r not in by_driver and r["arriving_at"]]
     missed = [r for r in arrivals if not r["confirmed_at"] and not r["arriving_at"]]
     ttc = [_minutes(r["confirmed_at"], r["actual_arrival"]) for r in auto]
     early = [m for m in ttc if m < -EARLY_MIN]
@@ -150,6 +169,8 @@ def metrics(records: list[dict]) -> dict:
     out = {
         "bookings": len(records), "arrivals": len(arrivals), "no_shows": len(no_shows),
         "auto_confirm_rate": _rate(len(auto), len(arrivals)),
+        "driver_confirm_rate": _rate(len(by_driver), len(arrivals)),
+        "confirmed_rate": _rate(len(auto) + len(by_driver), len(arrivals)),
         "ask_driver_rate": _rate(len(asked), len(arrivals)),
         "missed_arrival_rate": _rate(len(missed), len(arrivals)),
         "false_confirm_rate": _rate(sum(1 for r in no_shows if r["confirmed_at"]), len(no_shows)),
