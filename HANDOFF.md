@@ -17,7 +17,7 @@
 > - dashboard: `uv run python -m tools.demo` (one-command scripted demo with narration), a Demo feed banner, occupancy that includes unidentified cars, `docs/DEMO.md`.
 >
 > **Next:**
-> - mobile: switch `driver.tsx` / `api.ts` from the assumed shapes to the contract `Rewards`, `ConfirmResult` and `PendingConfirmation` (in progress).
+> - mobile: driver screens now use the real confirm/rewards contract (merged). Still never run on a device: test with Expo Go next.
 > - Field test on real phones and plates.
 > - Slides.
 > - Proposed, not yet approved by the owner:
