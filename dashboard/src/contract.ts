@@ -289,3 +289,24 @@ export interface Rewards {
   perks: Perk[];
   history: RewardEntry[]; // newest first, up to 50
 }
+
+// GET /signals?lot_id=&source=&since=&after_id=&limit= (oldest first; poll with after_id = cursor).
+export interface StoredSignal {
+  id: number;
+  client_event_id: string;
+  device_id: string;
+  user_id: string | null;
+  lot_id: string;
+  booking_id: string | null;
+  matched_booking_id: string | null; // booking a camera / paired gate event was attributed to
+  source: SignalSource;
+  kind: SignalKind;
+  observed_at: ISOTime;
+  received_at: ISOTime;
+  payload: Record<string, unknown>;
+}
+
+export interface SignalList {
+  signals: StoredSignal[];
+  cursor: number; // id of the last signal returned (or the after_id sent); pass it back as after_id
+}

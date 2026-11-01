@@ -113,6 +113,7 @@ Base URL `http://<laptop-ip>:8000`. JSON unless noted. Status column says what e
 | `GET /stays/{stay_id}/evidence` | Fused-confidence evidence timeline | 🟡 P1/P2 |
 | `GET /audit?lot_id=&limit=` | Activity history | ✅ P0 |
 | `POST /signals` | Body = signal, or `{"signals":[…]}` → `{accepted, duplicates}`; fuses the affected bookings (§6) | ✅ P2 |
+| `GET /signals?lot_id=&source=&since=&after_id=&limit=` | Stored signals, oldest first → `signal_list` `{signals:[{id, client_event_id, device_id, user_id, lot_id, booking_id, matched_booking_id, source, kind, observed_at, received_at, payload}], cursor}`. Without `after_id`: the newest `limit` (default 100, max 1000; `limit=1` = where to start). Poll with `after_id=<cursor>` for what came next. `since` filters on `observed_at`. Used by the edge camera's `--trigger api` to see `gate_sensor` events | ✅ P3 |
 | `POST /sync/push` | `{device_id, events:[sync_event]}` → `{acks:[id], conflicts:[{id, reason}]}` | 🟡 stub (P2) |
 | `GET /sync/pull?lot_id=&since=` | Changed bookings/stays/alerts since a cursor | 🟡 stub (P2) |
 | `GET /alerts?lot_id=` | Open alerts | 🟡 P0 computes; P1 persists |

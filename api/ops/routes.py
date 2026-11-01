@@ -478,6 +478,37 @@ def signals(body: SignalIn | SignalBatch, conn=Depends(get_conn)):
     return {"accepted": accepted, "duplicates": len(items) - accepted}
 
 
+@router.get("/signals")
+def list_signals(lot_id: str | None = None, source: str | None = None, since: str | None = None,
+                 after_id: int | None = None, limit: int = 100, conn=Depends(get_conn)):
+    """Stored signals, oldest first, for edge devices and debugging (CONTRACT.md §7).
+
+    With `after_id` (the previous response's `cursor`): the next `limit` signals after it. Without it:
+    the newest `limit` (so `limit=1` gives the latest id to start polling from). `since` filters on
+    observed_at."""
+    limit = max(1, min(limit, 1000))
+    q, args = "SELECT * FROM signals WHERE 1=1", []
+    if lot_id:
+        q, args = q + " AND lot_id = ?", args + [lot_id]
+    if source:
+        q, args = q + " AND source = ?", args + [source]
+    if since:
+        try:
+            q, args = q + " AND observed_at >= ?", args + [db.utc(db.parse(since))]
+        except ValueError as exc:
+            raise HTTPException(422, "since must be an ISO 8601 timestamp") from exc
+    if after_id is not None:
+        rows = conn.execute(q + " AND id > ? ORDER BY id LIMIT ?", args + [after_id, limit]).fetchall()
+    else:
+        rows = conn.execute(q + " ORDER BY id DESC LIMIT ?", args + [limit]).fetchall()[::-1]
+    out = [{"id": r["id"], "client_event_id": r["client_event_id"], "device_id": r["device_id"],
+            "user_id": r["user_id"], "lot_id": r["lot_id"], "booking_id": r["booking_id"],
+            "matched_booking_id": r["matched_booking_id"], "source": r["source"], "kind": r["kind"],
+            "observed_at": db.local(r["observed_at"]), "received_at": db.local(r["received_at"]),
+            "payload": json.loads(r["payload"] or "{}")} for r in rows]
+    return {"signals": out, "cursor": out[-1]["id"] if out else (after_id or 0)}
+
+
 # ---------- sync (basic) ----------
 class SyncEventIn(BaseModel):
     client_event_id: str

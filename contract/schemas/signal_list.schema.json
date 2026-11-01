@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "signal_list",
+  "type": "object",
+  "properties": {
+    "signals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "client_event_id": {
+            "type": "string"
+          },
+          "device_id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lot_id": {
+            "type": "string"
+          },
+          "booking_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "matched_booking_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "received_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "payload": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "client_event_id",
+          "device_id",
+          "user_id",
+          "lot_id",
+          "booking_id",
+          "matched_booking_id",
+          "source",
+          "kind",
+          "observed_at",
+          "received_at",
+          "payload"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "cursor": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "signals",
+    "cursor"
+  ],
+  "additionalProperties": false
+}
