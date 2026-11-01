@@ -22,10 +22,10 @@
 >
 > | Task | What | Owner |
 > |---|---|---|
-> | T1 | Car-look match (CLIP) when the plate is unreadable; suggestion only, never auto | **awazzan2**, now |
+> | T1 | Car-look match (CLIP) when the plate is unreadable; suggestion only, never auto | **awazzan2**: done, merged |
 > | T3 | Parking confirmation message ("Yes" counts only if the phone is at the lot) | **awazzan2**, after T1 |
 > | T4 | Check-out message + bill | **awazzan2**, after T3 |
-> | T5 | End-to-end gate test with the real sensors | **Cursor engineer** |
+> | T5 | Phone camera + real sensors end to end, field test, gate launcher (brief: `docs/briefs/CURSOR-phone-camera.md`) | **Cursor engineer** |
 > | T2 | Plate field test on real cars | **Adam** |
 > | T6 | Mobile on a real Android phone | **Adam** |
 >
