@@ -1,0 +1,5 @@
+models/
+tests/data/
+*.pt
+*.onnx
+__pycache__/
