@@ -62,9 +62,12 @@ CREATE TABLE IF NOT EXISTS signals (
   kind TEXT NOT NULL,
   observed_at TEXT NOT NULL,
   received_at TEXT NOT NULL,
-  payload TEXT NOT NULL DEFAULT '{}'
+  payload TEXT NOT NULL DEFAULT '{}',
+  -- Booking a camera signal was attributed to on arrival (plate or space match); driver signals use booking_id.
+  matched_booking_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_signals_lot_time ON signals(lot_id, observed_at);
+CREATE INDEX IF NOT EXISTS idx_signals_booking ON signals(booking_id);
 
 CREATE TABLE IF NOT EXISTS fusion_evidence (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -148,3 +151,29 @@ CREATE TABLE IF NOT EXISTS meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+-- Change feed for WS /live: one row per stay/alert insert or meaningful update (filled by triggers).
+CREATE TABLE IF NOT EXISTS changes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity TEXT NOT NULL CHECK (entity IN ('stay','alert')),
+  entity_id TEXT NOT NULL,
+  lot_id TEXT NOT NULL
+);
+CREATE TRIGGER IF NOT EXISTS stays_changed_insert AFTER INSERT ON stays BEGIN
+  INSERT INTO changes(entity, entity_id, lot_id) VALUES ('stay', NEW.id, NEW.lot_id);
+END;
+CREATE TRIGGER IF NOT EXISTS stays_changed_update AFTER UPDATE ON stays
+WHEN OLD.state IS NOT NEW.state OR OLD.in_at IS NOT NEW.in_at OR OLD.in_conf IS NOT NEW.in_conf
+  OR OLD.out_at IS NOT NEW.out_at OR OLD.out_method IS NOT NEW.out_method OR OLD.inferred IS NOT NEW.inferred
+BEGIN
+  INSERT INTO changes(entity, entity_id, lot_id) VALUES ('stay', NEW.id, NEW.lot_id);
+END;
+CREATE TRIGGER IF NOT EXISTS alerts_changed_insert AFTER INSERT ON alerts BEGIN
+  INSERT INTO changes(entity, entity_id, lot_id) VALUES ('alert', CAST(NEW.id AS TEXT), NEW.lot_id);
+END;
+CREATE TRIGGER IF NOT EXISTS alerts_changed_update AFTER UPDATE ON alerts
+WHEN OLD.status IS NOT NEW.status OR OLD.severity IS NOT NEW.severity OR OLD.message IS NOT NEW.message
+  OR OLD.estimated_fee IS NOT NEW.estimated_fee
+BEGIN
+  INSERT INTO changes(entity, entity_id, lot_id) VALUES ('alert', CAST(NEW.id AS TEXT), NEW.lot_id);
+END;

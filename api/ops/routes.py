@@ -428,9 +428,11 @@ class SignalBatch(BaseModel):
 
 @router.post("/signals")
 def signals(body: SignalIn | SignalBatch, conn=Depends(get_conn)):
+    from api.ops import fusion
     items = body.signals if isinstance(body, SignalBatch) else [body]
     received = db.utc(db.now(conn))
     accepted = 0
+    affected: set[str] = set()
     for s in items:
         if s.source == "gate_qr":
             gate = conn.execute("SELECT gate_secret FROM lots WHERE id = ?", (s.lot_id,)).fetchone()
@@ -438,33 +440,26 @@ def signals(body: SignalIn | SignalBatch, conn=Depends(get_conn)):
             if gate is None or not code or not qr_codes.verify_gate_code(
                     code, s.lot_id, gate["gate_secret"], db.now(conn)):
                 raise HTTPException(422, "Invalid or expired rotating gate code")
+        observed = db.parse(s.observed_at)
+        payload, matched = dict(s.payload), None
+        if s.source in ("camera_plate", "camera_spot"):
+            if payload.get("plate_norm"):
+                payload["plate_norm"] = db.normalize_plate(str(payload["plate_norm"]))
+            # Cameras don't know the booking: attribute by plate or watched space (CONTRACT.md §6).
+            matched = fusion.attribute_camera(conn, s.lot_id, s.source, s.kind, observed, payload)
         cur = conn.execute(
             "INSERT OR IGNORE INTO signals(client_event_id, device_id, user_id, lot_id, booking_id, source, kind,"
-            " observed_at, received_at, payload) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            " observed_at, received_at, payload, matched_booking_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (s.client_event_id, s.device_id, s.user_id, s.lot_id, s.booking_id, s.source, s.kind,
-             db.utc(db.parse(s.observed_at)), received, db.dumps(s.payload)))
+             db.utc(observed), received, db.dumps(payload), matched))
         accepted += cur.rowcount
+        if cur.rowcount:
+            affected |= {b for b in (s.booking_id, matched) if b}
+            if s.source == "camera_plate" and matched is None:
+                affected |= fusion.plate_bookings_elsewhere(conn, payload.get("plate_norm"), s.lot_id, observed)
     conn.commit()
-    affected = {s.booking_id for s in items if s.booking_id}
-    for s in items:
-        if s.source == "camera_plate":
-            plate = db.normalize_plate(s.payload.get("plate_norm"))
-            if plate:
-                observed_utc = db.utc(db.parse(s.observed_at))
-                booking = conn.execute(
-                    "SELECT b.id FROM bookings b WHERE b.plate_norm = ? AND b.lot_id = ? "
-                    "AND (b.status = 'booked' OR EXISTS (SELECT 1 FROM stays st WHERE st.booking_id=b.id "
-                    f"AND st.state IN {ACTIVE})) AND b.start_at <= ? AND b.end_at >= ? "
-                    "ORDER BY ABS(julianday(b.start_at) - julianday(?)) LIMIT 1",
-                    (plate, s.lot_id, db.utc(db.parse(s.observed_at) + timedelta(hours=12)),
-                     db.utc(db.parse(s.observed_at) - timedelta(hours=12)), observed_utc),
-                ).fetchone()
-                if booking:
-                    affected.add(booking["id"])
-    if affected:
-        from api.ops.fusion import fuse_booking
-        for booking_id in sorted(affected):
-            fuse_booking(conn, booking_id)
+    for booking_id in sorted(affected):
+        fusion.fuse_booking(conn, booking_id)
     return {"accepted": accepted, "duplicates": len(items) - accepted}
 
 
@@ -638,7 +633,7 @@ def refresh_alerts(conn) -> None:
 
     ended = conn.execute(
         "SELECT s.*, b.end_at, b.plate_display FROM stays s JOIN bookings b ON b.id = s.booking_id "
-        f"WHERE s.state IN {ACTIVE} AND b.end_at < ?", (now_utc,),
+        f"WHERE s.state IN {('ARRIVING',) + ACTIVE} AND b.end_at < ?", (now_utc,),
     ).fetchall()
     for stay in ended:
         mins_past = max(0, int((t - db.parse(stay["end_at"])).total_seconds() // 60))
@@ -648,7 +643,7 @@ def refresh_alerts(conn) -> None:
             _upsert_alert(conn, alert_type="unconfirmed_departure", severity="warning", lot_id=stay["lot_id"],
                           stay_id=stay["id"], booking_id=stay["booking_id"],
                           message=f"{stay['plate_display']} booking ended; departure is unconfirmed.", at=t)
-        if db.parse(stay["end_at"]) + timedelta(minutes=OVERSTAY_GRACE_MIN) < t:
+        if stay["state"] in ACTIVE and db.parse(stay["end_at"]) + timedelta(minutes=OVERSTAY_GRACE_MIN) < t:
             rate = float(FUSION_CONFIG.get("overstay_usd_per_15_min", 1.0))
             fee = round(math.ceil((mins_past - OVERSTAY_GRACE_MIN) / 15) * rate, 2)
             conn.execute("UPDATE stays SET state = 'OVERSTAY', updated_at = ? WHERE id = ? AND state = 'CHECKED_IN'",
@@ -659,17 +654,23 @@ def refresh_alerts(conn) -> None:
                           estimated_fee=fee, at=t)
         inferred_at = db.parse(stay["end_at"]) + timedelta(minutes=30)
         if t >= inferred_at:
+            from api.ops.fusion import inferred_departure
+            # Silent for 30 min after the end: check out at the last exit-like evidence, else the booking end,
+            # unless the spot camera still sees the car.
+            out_at = inferred_departure(conn, stay, t)
+            if out_at is None:
+                continue
             before = stay_out(stay)
             conn.execute(
                 "UPDATE stays SET state='CHECKED_OUT', out_at=?, out_method='inferred', out_conf=0.6, "
                 "inferred=1, updated_at=? WHERE id=?",
-                (db.utc(inferred_at), now_utc, stay["id"]),
+                (db.utc(out_at), now_utc, stay["id"]),
             )
             conn.execute("UPDATE bookings SET status='completed', updated_at=? WHERE id=?",
                          (now_utc, stay["booking_id"]))
             updated = conn.execute("SELECT * FROM stays WHERE id=?", (stay["id"],)).fetchone()
             audit(conn, action="inferred_check_out", entity="stay", entity_id=stay["id"], lot_id=stay["lot_id"],
-                  before=before, after=stay_out(updated), observed_at=inferred_at, actor_type="system")
+                  before=before, after=stay_out(updated), observed_at=out_at, actor_type="system")
             conn.execute(
                 "UPDATE alerts SET status='resolved', resolved_by='system', resolved_at=?, updated_at=? "
                 "WHERE stay_id=? AND status='open'",
@@ -755,8 +756,55 @@ class ClockIn(BaseModel):
 
 
 @router.post("/dev/reset")
-def dev_reset(conn=Depends(get_conn)):
-    return db.reset(conn)
+def dev_reset(prepark: bool = True, conn=Depends(get_conn)):
+    """`prepark=false` starts with empty lots (simulator replays)."""
+    return db.reset(conn, prepark=prepark)
+
+
+@router.post("/dev/tick")
+def dev_tick(conn=Depends(get_conn)):
+    """Run the time-based rules now (alerts, silent departures, low confidence); the simulator calls
+    this as it moves the demo clock, the API's own scheduler every 30 s."""
+    from api.ops import fusion
+    refresh_alerts(conn)
+    return {"now": db.now(conn).isoformat(timespec="seconds"), "rescored": fusion.sweep(conn)}
+
+
+@router.get("/dev/decisions")
+def dev_decisions(since: str | None = None, until: str | None = None, conn=Depends(get_conn)):
+    """What fusion decided per booking (start in [since, until)), for tools/simulator.
+
+    Times are demo-clock times: `arriving_at`/`confirmed_at`/`checked_out_at` are when the system
+    decided (audit received_at), the stay's `in_at`/`out_at` when it thinks the car moved.
+    """
+    q, args = "SELECT * FROM bookings WHERE 1=1", []
+    if since:
+        q, args = q + " AND start_at >= ?", args + [db.utc(db.parse(since))]
+    if until:
+        q, args = q + " AND start_at < ?", args + [db.utc(db.parse(until))]
+    bookings = conn.execute(q + " ORDER BY id", args).fetchall()
+    stays_by_booking = {r["booking_id"]: r for r in conn.execute(
+        "SELECT * FROM stays WHERE booking_id IS NOT NULL ORDER BY updated_at")}
+    decided: dict[tuple[str, str], str] = {}
+    for r in conn.execute("SELECT entity_id, action, MIN(received_at) AS at FROM audit_log WHERE entity = 'stay' "
+                          "GROUP BY entity_id, action"):
+        decided[(r["entity_id"], r["action"])] = r["at"]
+    alerts_by_booking: dict[str, set[str]] = {}
+    for r in conn.execute("SELECT booking_id, type FROM alerts WHERE booking_id IS NOT NULL"):
+        alerts_by_booking.setdefault(r["booking_id"], set()).add(r["type"])
+    out = []
+    for b in bookings:
+        stay = stays_by_booking.get(b["id"])
+        sid = stay["id"] if stay else None
+        exit_action = next((a for a in ("auto_check_out", "closed_by_arrival_elsewhere", "inferred_check_out",
+                                        "check_out") if (sid, a) in decided), None)
+        out.append({"booking_id": b["id"], "lot_id": b["lot_id"], "status": b["status"], "stay": stay_out(stay),
+                    "arriving_at": db.local(decided.get((sid, "arriving"))),
+                    "confirmed_at": db.local(decided.get((sid, "auto_check_in")) or decided.get((sid, "check_in"))),
+                    "checked_out_at": db.local(decided.get((sid, exit_action))) if exit_action else None,
+                    "check_out_action": exit_action,
+                    "alerts": sorted(alerts_by_booking.get(b["id"], ()))})
+    return out
 
 
 @router.get("/dev/clock")
