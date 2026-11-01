@@ -1,0 +1,19 @@
+# Driver rewards ledger (ARCHITECTURE_PLAN.md §3.4, api/ops/rewards.py). Demo values; payment is out of scope.
+points:
+  confirm_arrival: 10        # driver taps "arrived" on a stay that sensors already half-believed (ARRIVING)
+  confirm_departure: 10      # driver taps "left" and some exit evidence agrees
+  on_time_arrival: 5         # checked in between start - early and start + late
+  clean_week: 20             # a finished week with a completed booking and no cancellation or no-show
+on_time_window_min: {early: 15, late: 10}
+daily_cap: 50                # points per local day; extra points are logged with 0
+streak_multiplier: {per_week: 0.1, max: 2.0}   # confirmation points x (1 + 0.1 x streak_weeks), capped
+grace: {per_confirmed_departure_min: 5, cap_min: 30}   # free overstay minutes banked by confirmed departures
+perks:
+  - {id: grace_bank, name: "Grace-time bank", requires: {confirmations: 1},
+     description: "Confirmed departures bank free minutes that absorb a future overstay."}
+  - {id: free_hour, name: "1 free hour at your usual lot", requires: {points: 150},
+     description: "Redeem at the attendant or in the app."}
+  - {id: priority, name: "Priority on sold-out lots", requires: {streak_weeks: 4},
+     description: "Four clean weeks in a row put you first in line when a lot is full."}
+  - {id: verified, name: "Verified driver", requires: {points: 300, streak_weeks: 4},
+     description: "Hands-free check-in and pay-after."}

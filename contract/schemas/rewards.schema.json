@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "rewards",
+  "type": "object",
+  "properties": {
+    "user_id": {
+      "type": "string"
+    },
+    "points": {
+      "type": "integer"
+    },
+    "streak_weeks": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "grace_minutes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "tier": {
+      "enum": [
+        "standard",
+        "verified"
+      ]
+    },
+    "perks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "unlocked": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "unlocked"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "history": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "points": {
+            "type": "integer"
+          },
+          "reason": {
+            "enum": [
+              "confirm_arrival",
+              "confirm_departure",
+              "on_time_arrival",
+              "clean_week"
+            ]
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "at",
+          "points",
+          "reason",
+          "label"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "user_id",
+    "points",
+    "streak_weeks",
+    "grace_minutes",
+    "tier",
+    "perks",
+    "history"
+  ],
+  "additionalProperties": false
+}

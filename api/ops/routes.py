@@ -127,7 +127,7 @@ def overview(lot_id: str, conn=Depends(get_conn)):
     occupied = max(0, occupied - unidentified_exits(conn, lot_id, t))
     upcoming = conn.execute(
         "SELECT b.* FROM bookings b WHERE b.lot_id = ? AND b.status = 'booked' AND b.end_at > ? AND b.start_at <= ?"
-        " AND NOT EXISTS (SELECT 1 FROM stays s WHERE s.booking_id = b.id) ORDER BY b.start_at",
+        " AND NOT EXISTS (SELECT 1 FROM stays s WHERE s.booking_id = b.id AND s.state != 'EXPECTED') ORDER BY b.start_at",
         (lot_id, db.utc(t), db.utc(t + timedelta(minutes=60)))).fetchall()
     reserved = len(upcoming)
 
@@ -632,7 +632,7 @@ def refresh_alerts(conn) -> None:
 
     upcoming = conn.execute(
         "SELECT b.* FROM bookings b WHERE b.status = 'booked' AND b.start_at BETWEEN ? AND ? "
-        "AND NOT EXISTS (SELECT 1 FROM stays s WHERE s.booking_id = b.id) ORDER BY b.start_at",
+        "AND NOT EXISTS (SELECT 1 FROM stays s WHERE s.booking_id = b.id AND s.state != 'EXPECTED') ORDER BY b.start_at",
         (now_utc, soon),
     ).fetchall()
     upcoming_ids = {b["id"] for b in upcoming}
@@ -695,7 +695,7 @@ def refresh_alerts(conn) -> None:
 
     no_shows = conn.execute(
         "SELECT b.* FROM bookings b WHERE b.status = 'booked' AND b.end_at < ? "
-        "AND NOT EXISTS (SELECT 1 FROM stays s WHERE s.booking_id = b.id)", (now_utc,),
+        "AND NOT EXISTS (SELECT 1 FROM stays s WHERE s.booking_id = b.id AND s.state != 'EXPECTED')", (now_utc,),
     ).fetchall()
     for booking in no_shows:
         conn.execute("UPDATE bookings SET status = 'no_show', updated_at = ? WHERE id = ?",
@@ -736,21 +736,6 @@ def resolve_alert(alert_id: int, body: ResolveAlertIn, conn=Depends(get_conn)):
               observed_at=now, device_id=body.device_id, actor_type="attendant")
         conn.commit()
     return alert_out(conn.execute("SELECT * FROM alerts WHERE id = ?", (alert_id,)).fetchone())
-
-
-# ---------- not built yet ----------
-@router.post("/stays/{stay_id}/confirm")
-def confirm(stay_id: str):
-    raise HTTPException(501, "Driver confirmation is not built yet (phase P3).")
-
-
-@router.get("/users/{user_id}/rewards")
-def rewards(user_id: str, conn=Depends(get_conn)):
-    pts = conn.execute("SELECT COALESCE(SUM(delta), 0) FROM points_ledger WHERE user_id = ?", (user_id,)).fetchone()[0]
-    tier = conn.execute("SELECT tier FROM users WHERE id = ?", (user_id,)).fetchone()
-    if tier is None:
-        raise HTTPException(404, f"Unknown user {user_id}")
-    return {"user_id": user_id, "points": pts, "grace_minutes": 0, "tier": tier["tier"]}
 
 
 @router.get("/keys/qr")

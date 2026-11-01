@@ -102,7 +102,10 @@ def score(signals: list[dict], prior: float, now: datetime, direction: str,
         log_lr = signal_log_lr(sig, direction, cfg)
         if log_lr is None:
             continue
-        if abs(log_lr) >= DEFINITIVE_LOG_LR:
+        if log_lr <= -DEFINITIVE_LOG_LR and direction == "arrival":
+            # A definitive "no" (driver: not me) discards the evidence so far; later evidence starts from the prior.
+            weighted, running = _logit(prior) - running, _logit(prior)
+        elif abs(log_lr) >= DEFINITIVE_LOG_LR:
             weighted = running = log_lr  # definitive sources settle it outright
         else:
             age_min = max(0.0, (now - sig["observed_at"]).total_seconds() / 60)
@@ -142,7 +145,9 @@ def decide(stay: dict | None, signals: list[dict], now: datetime, prior: float, 
     if state in (None, "ARRIVING"):
         p, points = score(signals, prior, now, "arrival", cfg)
         out.update(arrival_p=p, arrival_points=points)
-        arrivals = [s for s in here if _is_positive(s, "arrival", cfg)]
+        denied = max((s["observed_at"] for s in here
+                      if (signal_log_lr(s, "arrival", cfg) or 0) <= -DEFINITIVE_LOG_LR), default=None)
+        arrivals = [s for s in here if _is_positive(s, "arrival", cfg) and (denied is None or s["observed_at"] > denied)]
         definitive = any(cfg["signals"].get(s["source"], {}).get("definitive") for s in arrivals)
         contradiction = bool(strong_elsewhere) and any(s["source"] in STRONG for s in arrivals)
         out["contradiction"] = contradiction
@@ -323,7 +328,8 @@ def fuse_booking(conn, booking_id: str) -> dict | None:
     now = db.now(conn)
     stay = conn.execute("SELECT * FROM stays WHERE booking_id = ? ORDER BY updated_at DESC LIMIT 1",
                         (booking_id,)).fetchone()
-    current = None if stay is None else {
+    # EXPECTED = a driver said "not me" to an earlier ARRIVING; fuse it as if there were no stay yet.
+    current = None if stay is None or stay["state"] == "EXPECTED" else {
         "state": stay["state"], "in_at": db.parse(stay["in_at"]) if stay["in_at"] else now,
         "inferred": bool(stay["inferred"])}
     prior = prior_for(booking["user_id"], booking["lot_id"], now, latest_priors())
@@ -339,14 +345,14 @@ def fuse_booking(conn, booking_id: str) -> dict | None:
                 (stay_id, booking_id, booking["lot_id"], booking["space_id"], booking["plate_norm"], d["state"],
                  db.utc(d["in_at"]), d["arrival_p"], db.utc(now)))
         else:
-            conn.execute("UPDATE stays SET state=?, in_conf=?, in_method='auto', updated_at=? WHERE id=?",
-                         (d["state"], d["arrival_p"], db.utc(now), stay_id))
+            conn.execute("UPDATE stays SET state=?, in_at=?, in_conf=?, in_method='auto', updated_at=? WHERE id=?",
+                         (d["state"], db.utc(d["in_at"]), d["arrival_p"], db.utc(now), stay_id))
         stay = conn.execute("SELECT * FROM stays WHERE id = ?", (stay_id,)).fetchone()
         audit(conn, action="auto_check_in" if d["arrival"] == "check_in" else "arriving", entity="stay",
               entity_id=stay_id, lot_id=booking["lot_id"], before=before, after=stay_out(stay),
               observed_at=d["in_at"], actor_type="system")
         _resolve_alerts(conn, now, booking_id=booking_id, alert_type="low_confidence")
-        if before is None:
+        if before is None or before["state"] == "EXPECTED":
             resolve_gate(conn, booking["lot_id"], "enter", d["in_at"], booking_id, stay_id)
         if d["arrival"] == "check_in":
             _close_elsewhere(conn, booking, d["in_at"], d["arrival_p"], now)
@@ -561,7 +567,7 @@ def sweep(conn) -> int:
     cutoff = db.utc(now - _minutes(CONFIG["thresholds"], "attendant_after_min", 10))
     ids = [r["id"] for r in conn.execute(
         "SELECT b.id FROM bookings b WHERE b.status = 'booked' AND b.end_at > ? "
-        "AND NOT EXISTS (SELECT 1 FROM stays s WHERE s.booking_id = b.id) "
+        "AND NOT EXISTS (SELECT 1 FROM stays s WHERE s.booking_id = b.id AND s.state != 'EXPECTED') "
         "AND NOT EXISTS (SELECT 1 FROM alerts a WHERE a.booking_id = b.id AND a.type = 'low_confidence') "
         "AND EXISTS (SELECT 1 FROM signals g WHERE (g.booking_id = b.id OR g.matched_booking_id = b.id) "
         "            AND g.lot_id = b.lot_id AND g.observed_at <= ?)",

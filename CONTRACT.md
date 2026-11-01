@@ -117,8 +117,9 @@ Base URL `http://<laptop-ip>:8000`. JSON unless noted. Status column says what e
 | `GET /sync/pull?lot_id=&since=` | Changed bookings/stays/alerts since a cursor | 🟡 stub (P2) |
 | `GET /alerts?lot_id=` | Open alerts | 🟡 P0 computes; P1 persists |
 | `POST /alerts/{alert_id}/resolve` | `{device_id, note?}` resolves an alert | 🟡 P1 |
-| `POST /stays/{stay_id}/confirm` | Driver one-tap `{answer: "yes"|"no"}` | 🟡 stub (P3) |
-| `GET /users/{user_id}/rewards` | Points, grace minutes, tier | 🟡 stub (P3) |
+| `POST /stays/{stay_id}/confirm` | Driver one-tap, schema `confirm_request` `{device_id, client_event_id, answer: "arrived"|"not_me"|"left", observed_at?}` → `confirm_result` `{result: "checked_in"|"checked_out"|"rejected"|"disputed"|"already", message, stay, points_awarded}` (see below) | ✅ P3 |
+| `GET /users/{user_id}/pending_confirmations` | Stays waiting for this driver → `[pending_confirmation]` `{stay, booking, question: "arrived"|"left", p, asked_at}` | ✅ P3 |
+| `GET /users/{user_id}/rewards` | Schema `rewards` `{user_id, points, streak_weeks, grace_minutes, tier: "standard"|"verified", perks:[{id, name, description, unlocked}], history:[{at, points, reason, label}]}` | ✅ P3 |
 | `GET /keys/qr` | `{public_key}` base64url Ed25519 public key | 🟡 stub (P2) |
 | `GET /dev/gate/{lot_id}` | `{code, valid_until}` rotating gate QR (demo only) | 🟡 P1 |
 | `WS /live?lot_id=` | Pushes `{type: "stay"|"alert", data}` on every change (see below) | ✅ P2 |
@@ -132,6 +133,14 @@ Base URL `http://<laptop-ip>:8000`. JSON unless noted. Status column says what e
  "message": "Checked in B 123456 for AUB until 12:00",
  "booking": { …booking… } | null, "stay": { …stay… } | null, "suggest": "register_walk_in" | null}
 ```
+
+Driver confirm (P3): the answer is stored as a `driver_confirm` signal (`arrived` → kind `confirm`, `not_me` → `deny`, `left` → `exit`; definitive in `config/fusion.yaml`) and fusion acts on it, so it appears in `GET /stays/{id}/evidence`.
+- `arrived`: an `ARRIVING` (0.60–0.95) stay becomes `CHECKED_IN` with `in_method: "driver"`, `in_conf: 1.0`.
+- `left`: the stay becomes `CHECKED_OUT` with `out_method: "driver"` (also corrects an inferred checkout).
+- `not_me`: an `ARRIVING` stay goes back to `EXPECTED` (the booking is upcoming again and can still become a no-show) + `low_confidence` alert; on an already checked-in stay → `result: "disputed"` + `anomaly` alert.
+- Idempotent by `client_event_id`. `pending_confirmations` asks `arrived` for `ARRIVING` stays and `left` for `UNCONFIRMED_DEPARTURE` / `OVERSTAY`.
+
+Rewards (P3, `config/rewards.yaml`, ledger `points_ledger`, one row per event): +10 confirmed arrival, +10 confirmed departure (× streak multiplier 1 + 0.1·`streak_weeks`, max 2; only when other evidence agreed: the stay was already `ARRIVING`, or an exit signal exists), +5 on-time arrival (in at start −15 … +10 min), +20 clean week (a finished week with a completed booking and no cancellation / no-show); daily cap 50. `streak_weeks` = clean weeks in a row up to last week. `grace_minutes` = 5 per confirmed departure, cap 30. Perks unlock by points / streak / confirmations; `tier` is `verified` when the `verified` perk is unlocked.
 
 `WS /live?lot_id=` (lot optional = all lots): after connect the server sends one JSON message per stay or alert that is inserted or meaningfully changed (stay state/times/confidence; alert status/severity/message/fee), whatever caused it (scan, signals, sync, scheduler). Shape `{"type": "stay", "data": <stay as in GET /stays>}` or `{"type": "alert", "data": <alert as in GET /alerts>}`; only the latest state of an entity is sent per 0.5 s poll. Nothing is replayed on connect: load `GET /stays` / `GET /alerts` first, then apply messages. Clients may send any text (ignored); keep polling as a fallback.
 
