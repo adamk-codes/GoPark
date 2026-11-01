@@ -16,22 +16,20 @@
 > - ops: `POST /stays/{id}/confirm` (arrived / not_me / left); `GET /users/{id}/pending_confirmations`; rewards ledger (`config/rewards.yaml`); `GET /signals` with an `after_id` cursor; simulator `--driver-confirm`; README "Integrating a gate sensor". Offline replay with 80% of drivers answering: 97% confirmed, 0 false confirms.
 > - dashboard: `uv run python -m tools.demo` (one-command scripted demo with narration), a Demo feed banner, occupancy that includes unidentified cars, `docs/DEMO.md`.
 >
-> **Next = Challenge 1 detection** (owner priority, 2026-11-01). Tasks T1–T6 are in **`docs/briefs/C1-detection.md`**, each self-contained for any Claude Code / Cursor / cloud session. The full technique chain (why each method needs the next) is in **`docs/DETECTION.md`**.
-> 1. **T1 car-look match** (ML): CLIP zero-shot colour/body/make vs expected bookings when the plate is unreadable. Suggestion only, never auto.
-> 2. **T2 plate field test** on real Lebanese plates; replace the synthetic numbers.
-> 3. **T3 secure NFC sticker** (NTAG 424 DNA SUN) for lots without a camera.
-> 4. **T4 valet "call your car"**, stop-the-clock billing, tap bonuses.
-> 5. **T5 end-to-end gate test** with the Cursor engineer's sensors.
-> 6. **T6 mobile on a real Android phone.**
+> **Next = Challenge 1 detection** (owner priority, 2026-11-01). Tasks are in **`docs/briefs/C1-detection.md`**; the technique chain and the driver messages are in **`docs/DETECTION.md`**.
+> - **Scope:** lots with gate sensors + a plate camera at entry and exit, plus phone GPS. The final check is a **confirmation message** to the driver ("Checked in at BDD 08:12. Is this you? Yes / Not me").
+> - **Out of scope:** NFC, and lots without an entry/exit camera. Don't build them.
 >
-> **Assigned:**
-> - **awazzan2:** T1 → T4 → T3 (code, now).
-> - **Cursor engineer:** T5.
-> - **Adam:** T2, T6.
+> | Task | What | Owner |
+> |---|---|---|
+> | T1 | Car-look match (CLIP) when the plate is unreadable; suggestion only, never auto | **awazzan2**, now |
+> | T3 | Parking confirmation message ("Yes" counts only if the phone is at the lot) | **awazzan2**, after T1 |
+> | T4 | Check-out message + bill | **awazzan2**, after T3 |
+> | T5 | End-to-end gate test with the real sensors | **Cursor engineer** |
+> | T2 | Plate field test on real cars | **Adam** |
+> | T6 | Mobile on a real Android phone | **Adam** |
 >
-> The kickoff prompt is at the top of the C1 brief. The owner's laptop is off, so the local Claude sessions are stopped.
->
-> Owner-approved direction: no camera → phone signals + secure NFC + driver tap; gate → sensors + plate camera (+ car-look). Slides come after C1.
+> The kickoff prompt for awazzan2 is at the top of the C1 brief. The owner's laptop is off, so the local Claude sessions are stopped. Slides come after C1.
 >
 > **The gate-sensor hardware/firmware is owned by an external engineer working in Cursor.** They POST `gate_sensor` signals per CONTRACT §6. We don't write ESP32 code.
 > Repo: https://github.com/adamk-codes/GoPark · default branch `main`
@@ -72,8 +70,8 @@ Checks at this point: `uv run pytest` → **54 passed**; `npm --prefix dashboard
 ## 3. Known weaknesses (be honest in the demo)
 - **All detection numbers are synthetic** (generator traces). The plate OCR has never seen real Lebanese plates; T2 fixes this.
 - **Fusion tuning may be overfit:** the motion weight doubled on synthetic data that has no false motion signals. Re-tune on field data.
-- **Valet and dead-phone cases are weakest:** 37% and 21% missed without a camera or scan. T1, T3 and T4 address this.
-- **Mobile has never run on a device**, and NFC and background geofence need an Expo development build (not Expo Go).
+- **Dead-phone and unreadable-plate cases are weakest** (21% of dead-phone cars missed in the replay). T1 + T3 address this. Valet / no-camera lots are out of scope.
+- **Mobile has never run on a device**, and remote push and background geofence need an Expo development build (not Expo Go).
 - **Old branches:** `claude/feat-ops-p1-0776d5` is a duplicate ops implementation. **Don't merge it.**
 
 ## 4. Next: Challenge 1 detection

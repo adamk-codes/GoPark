@@ -1,12 +1,17 @@
 # How GoPark Sense detects arrivals and departures (Challenge 1)
 
+**Scope (owner decision, 2026-11-01):** lots with a **plate camera and presence sensors at the entry and exit**.
+Out of scope for now:
+- lots without an entry/exit camera;
+- NFC stickers.
+
 No single method is good enough on its own. Each technique below has a weakness, and the **next one in the
 list covers it**. Fusion (`api/ops/fusion.py`) adds them all up into one confidence score per booking:
 
 | Confidence | What happens |
 |---|---|
 | ≥ 0.95 | Checked in or out automatically |
-| 0.60–0.95 | Ask the driver (one tap) |
+| 0.60–0.95 | Waits for the driver's answer to the confirmation message |
 | < 0.60 | Flag for the attendant ("Needs eyes") |
 
 Status:
@@ -18,33 +23,27 @@ Status:
 | # | Technique | What it gives | Why it is not enough alone | Covered by |
 |---|---|---|---|---|
 | 1 | **Booking + Rhythm prediction** (built) | Who is expected at which lot and when (e.g. "Rania, Mon/Wed ~08:10, 0.83"). Sets the starting confidence and the "expected soon" list. | It is a prediction, not an observation. People cancel, come late or don't come. | 2 |
-| 2 | **Phone signals: geofence + "stopped driving"** (built) | An early heads-up ("3 min away") and arrival evidence, with nothing to install at the lot. | City GPS is off by 20–50 m, so "near" isn't "inside". There's no GPS underground. Phones delay or kill background apps, and many users refuse "Always" location. The phone may be dead, at home, or in another car. Exit alerts arrive late, and billing depends on the exit. | 3 |
-| 3 | **Gate presence sensors**: 2 per lane, direction from trigger order (built in the API; hardware by the Cursor engineer) | Every car in or out, at the exact second, including walk-ins and dead phones. This is what makes **departures** trustworthy. | It knows *a* car passed, not *which* car. Needs a lane or gate. | 4 |
-| 4 | **Plate camera** at entry/exit: old phone, plate OCR, paired with the sensor within ±8 s (built; never field-tested) | *Which* car, automatically, on entry and exit. With the sensor, a confident check-in and check-out with no human. | Fails on dirty, bent, missing or temporary plates, at night, with glare, at bad angles, and with cars bumper to bumper. Needs power, Wi-Fi and the lot owner's OK. | 5 |
-| 5 | **Car-look match**: colour, body type and make by CLIP zero-shot on the car crop, against the cars expected right now (planned) | A *suggestion* of who it is when no plate was read ("probably Rania's blue BMW SUV"). | Only works when the expected cars look different. Three white Kias can't be told apart. Make/model is unreliable at night or at an angle. **It never checks anyone in on its own.** | 6, 7 |
-| 6 | **Secure NFC sticker**: NTAG 424 DNA, each tap is a new signed code (planned; `nfc` signal source exists) | Strong identity (the driver's phone + this lot + now) at lots with **no camera**, or when 4 and 5 failed. Valet: "tap to call your car" *is* the check-out. | The driver has to do it, and people forget, especially on exit. Plain stickers can be copied (that's why we use secure tags plus the phone's location at tap time). | 7, plus the billing rule below |
-| 7 | **Driver confirm in the app**: "Did you just arrive?" / "Did you leave?" (built) | Resolves the uncertain middle (0.60–0.95). In the replay: 93% auto + 4% by tapping = 97% confirmed, 0 false confirms. | Drivers ignore notifications. | 8 |
-| 8 | **Attendant**: scan booking QR / booking ID / plate, walk-ins, "Needs eyes" list (built; works offline) | The last resort that always works; also catches walk-ins and disputes. | Costs staff time, and humans make mistakes. That's why it comes last, for the few cases the steps above didn't settle. | — |
-| + | **Spot camera** (optional, built): overhead phone, occupied/vacant per spot | Exits at **open lots with no gate** (a car leaving its spot), and occupancy. | No identity. Cars hide each other. Needs a high mount. | 4–8 |
+| 2 | **Phone GPS + "stopped driving"** (built) | An early heads-up ("3 min away") that puts the driver on the expected list, plus arrival evidence. | City GPS is off by 20–50 m, so "near" isn't "inside". No GPS underground. Phones delay background apps. The phone may be dead or in another car. Exit alerts arrive late. | 3 |
+| 3 | **Gate presence sensors**: 2 per lane, direction from trigger order (built in the API; hardware by the Cursor engineer) | Every car in or out, at the exact second, including walk-ins and dead phones. This makes **departures and billing exact**. | It knows *a* car passed, not *which* car. | 4 |
+| 4 | **Plate camera** at entry and exit, paired with the sensor within ±8 s (built; never field-tested) | *Which* car, automatically, on entry and exit. | Fails on dirty, bent, missing or temporary plates, at night, with glare, at bad angles, and with cars bumper to bumper. | 5 |
+| 5 | **Car-look match**: CLIP zero-shot colour, body type and make on the car crop, against the cars expected right now (planned, T1) | A suggestion of who it is when no plate was read ("probably Rania's blue BMW SUV"). | Only works when the expected cars look different. Three white Kias can't be told apart. **It never checks anyone in on its own.** | 6 |
+| 6 | **Parking confirmation message** to the driver (planned, T3; the driver-confirm API is built) | After every check-in: "Your car B123456 was checked in at BDD at 08:12. Is this you? **Yes / Not me**." After every check-out: the time and the amount. It settles the uncertain cases and catches mistakes. | Drivers may not answer, or may tap "Yes" without reading. | 7 |
+| 7 | **Attendant**: scan booking QR / booking ID / plate, walk-ins, "Needs eyes" list (built; works offline) | The last resort that always works. It also handles "Not me" disputes and walk-ins. | Costs staff time. That's why it comes last. | — |
 
-## Billing rule that makes people tap (planned)
+## The confirmation message (what the driver sees)
 
-- **Tapping out stops the clock.** An evidence, driver or attendant check-out is billed to that minute.
-- **An inferred check-out** (nobody saw the car leave) is billed to the **later of** the booking end and the inferred time.
-- **Points:** bonus points for tapped arrivals and departures, plus streaks (`config/rewards.yaml`). These are a sweetener only; the billing rule is the incentive that actually works.
+| When | Message | Answers |
+|---|---|---|
+| Auto check-in (≥ 0.95) | "Checked in at BDD, 08:12, car B123456. Not you? Tell us." | *Not me* (optional) |
+| Uncertain check-in (0.60–0.95, e.g. the car-look match or a weak plate read) | "Did you just park at BDD? (blue BMW, 08:12)" | **Yes** / **Not me** |
+| Check-out | "You left BDD at 10:42. 2 h 30 min, $X." | *That's wrong* (optional) |
+| Overstay | "Your booking ended 15 min ago. $Y extra so far." | — |
 
-## What each kind of lot uses
-
-| Lot | Check-in | Check-out | Until cameras are installed |
-|---|---|---|---|
-| Gated / mall (BDD, LAU) | Sensors + plate camera; car-look match if the plate was not read | Sensors + plate camera | Sensors count cars; phone signals + NFC sticker + driver tap say who |
-| Big valet (HAMRA) | Camera at the **drop-off stand**; the valet scans the booking QR at key handover | "Tap to call your car" (NFC or in-app) → the valet hands over the car → check-out | Valet scan + "call your car" |
-| Open lot, no gate (AUB) | Phone signals + secure NFC sticker; spot camera if mounted | NFC tap-out or in-app "I left" (stops the clock); spot camera; else inferred and billed to booking end | Same |
-| Small partner lot | Phone signals + NFC sticker + driver tap | NFC tap-out / "I left" | Same |
-
-**In short:** where there is no camera, the phone does the automatic part and the secure NFC sticker is the
-confirmation (billing rewards the tap). Where there's a gate, the sensors make departures exact. The camera
-adds who it is, and the car-look match and the attendant cover the cars the camera misses.
+What each answer does:
+- **No answer:** an auto check-in stays as it is. An uncertain one stays open for the attendant after 10 minutes.
+- **Yes:** the "Yes" counts as strong evidence only if the phone is near the lot when it answers (GPS). Answering from home does not check a car in.
+- **Not me:** sends a dispute alert to the attendant.
+- **Points:** a confirmation earns points only when the sensors already agree (`config/rewards.yaml`).
 
 ## Cheating the exit fee
 
@@ -53,4 +52,10 @@ adds who it is, and the car-look match and the attendant cover the cars the came
 | Leave the lot and park on the street | Exit sensors + plate | Checked out correctly; they really left |
 | Leave and come back in | Exit, then a new entry + plate | A new stay, billed |
 | Move to another spot inside the lot | No gate crossing | The stay keeps running (billing is per stay, not per spot) |
-| Leave an open lot without tapping | Weak GPS only | Inferred check-out, **billed to booking end** |
+
+## Where a message is not enough (why NFC might come back later)
+
+1. **Someone else's car under your booking.** The plate isn't read, the car-look match is ambiguous, and the driver answers "Yes" while not actually there (to keep their spot). **Covered** by counting a "Yes" only when the phone's GPS is at the lot.
+2. **Underground with no signal.** The message arrives late. **Covered** by the app's offline outbox: the answer is sent when the signal comes back, and the sensor and camera already did the check-in.
+3. **Plate unreadable + similar cars + dead phone.** Nobody can be asked. NFC wouldn't help either (the phone is dead). **The attendant handles it.**
+4. **Lots without an entry/exit camera.** This is the only real case for NFC (proof the driver is physically there). Out of scope for now.
