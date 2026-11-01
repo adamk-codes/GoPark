@@ -5,6 +5,7 @@ import { Badge, Card, ErrorLine, Muted, Section, s } from '../../components/ui';
 import type { ExpectedArrival, LotOverview } from '../../contract';
 import { hhmm, minutesBetween } from '../../lib/format';
 import { useApp } from '../../lib/settings';
+import { useSync } from '../../lib/sync';
 import { useResource } from '../../lib/useResource';
 import { t } from '../../strings';
 import { c } from '../../theme';
@@ -13,14 +14,20 @@ const POLL_MS = 10_000;
 
 export default function Overview() {
   const { api, settings } = useApp();
+  const engine = useSync();
   const load = useCallback(() => api.overview(settings.lotId), [api, settings.lotId]);
-  const { data: ov, error, refreshing, refresh } = useResource(load, `${settings.apiUrl}|${settings.lotId}`, POLL_MS);
+  const { data: ov, error, savedAt, refreshing, refresh } = useResource(load, `${settings.apiUrl}|${settings.lotId}`,
+    POLL_MS, `overview:${settings.lotId}`);
+  // Check-ins and walk-ins done on this phone that the server (and so these counts) hasn't seen yet.
+  const unsynced = engine.pendingItems().filter((p) => p.local?.result === 'checked_in').length;
 
   return (
     <ScrollView style={s.screen} contentContainerStyle={s.body}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={c.brand} />}>
-      {error && <ErrorLine text={`${t.common.cantReach(settings.apiUrl)} · ${error}`} />}
+      {error && !ov && <ErrorLine text={`${t.common.cantReach(settings.apiUrl)} · ${error}`} />}
+      {error && ov && savedAt !== null && <Muted>{t.sync.lastUpdated(hhmm(ov.now))}</Muted>}
       {!ov && !error && <Muted>{t.common.loading}</Muted>}
+      {unsynced > 0 && <Badge label={t.overview.unsynced(unsynced)} fg={c.warn} bg={c.warnSoft} />}
       {ov && <Body ov={ov} />}
     </ScrollView>
   );

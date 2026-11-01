@@ -1,6 +1,5 @@
 // Every user-facing string lives here so the app can be translated (Arabic, RTL) in one place.
-import type { Method, ScanResultCode } from './contract';
-import type { AlertType } from './pending-contract';
+import type { AlertType, Method, ScanResultCode } from './contract';
 
 export const t = {
   appName: 'GoPark Sense',
@@ -28,6 +27,7 @@ export const t = {
     probability: (p: number) => `${Math.round(p * 100)}%`,
     demoTime: (hhmm: string) => `Demo time ${hhmm}`,
     tapToScan: 'Tap a booking to check it in',
+    unsynced: (n: number) => `${n} check-in${n === 1 ? '' : 's'} on this phone not synced yet`,
   },
   scan: {
     cameraTitle: 'Point at a booking QR',
@@ -39,11 +39,9 @@ export const t = {
     manualLabel: 'Booking ID or plate',
     manualPlaceholder: 'B017180 or G 270205',
     submit: 'Check in / out',
-    sending: 'Checking…',
     registerWalkIn: 'Register walk-in',
     walkInPlate: 'Plate of the walk-in car',
     walkInSubmit: 'Check in walk-in',
-    walkInMocked: 'Walk-in saved on this phone only (server endpoint not live yet).',
     until: (hhmm: string) => `until ${hhmm}`,
     from: (hhmm: string) => `from ${hhmm}`,
     booking: 'Booking',
@@ -51,6 +49,42 @@ export const t = {
     lotLabel: 'Lot',
     window: 'Window',
     networkError: 'Network error. Check Settings → API URL.',
+  },
+  sync: {
+    status: (online: boolean | null, pending: number) =>
+      online === null ? 'Connecting…'
+        : online ? (pending ? `Online · syncing ${pending}` : 'Online')
+          : `Offline · ${pending} pending`,
+    syncNow: 'Sync now',
+    pending: 'Pending sync',
+    synced: 'Synced',
+    conflict: 'Server refused',
+    serverSays: 'Server',
+    offlineCheck: 'Checked on this phone',
+    unverified: 'Not checked yet',
+    lastUpdated: (hhmm: string) => `Offline · showing data from ${hhmm}`,
+    conflicts: 'Sync conflicts',
+    dismiss: 'Dismiss',
+    eventTypes: { scan: 'Scan', checkout: 'Check-out', walk_in: 'Walk-in', resolve_alert: 'Resolve alert',
+      override: 'Override' } as Record<string, string>,
+  },
+  // Answers decided on the phone (src/core/decide.ts) before the server has seen the scan.
+  local: {
+    noKey: "Can't check this QR on the phone yet (no key downloaded). Queued for the server.",
+    badSignature: 'This QR is not signed by GoPark.',
+    qrMismatch: 'This QR does not match the booking on file.',
+    notInCache: "Not in today's bookings for this lot. Register the car as a walk-in.",
+    justIn: (p: string) => `${p} was just checked in. Scan again on exit.`,
+    wrongLot: (p: string, at: string, here: string) => `${p} is booked at ${at}, not ${here}.`,
+    expired: (p: string, end: string) => `Booking for ${p} ended at ${end}.`,
+    tooEarly: (p: string, start: string) => `${p} is booked from ${start}.`,
+    used: (p: string) => `${p} already checked in and out on this booking.`,
+    checkedIn: (p: string, lot: string, end: string) => `Checked in ${p} at ${lot} until ${end}.`,
+    checkedOut: (p: string) => `Checked out ${p}.`,
+    walkIn: (p: string, lot: string) => `Registered walk-in ${p} at ${lot}.`,
+    walkInAlready: (p: string) => `${p} is already checked in.`,
+    badPlate: 'Plate must look like B 123456 (one letter, up to 6 digits).',
+    activeElsewhere: (lot: string) => `This car is already parked at ${lot}.`,
   },
   result: {
     checked_in: 'Checked in',
@@ -99,18 +133,17 @@ export const t = {
     noLots: 'Lots load once the API is reachable.',
     deviceId: 'Device ID',
     regenerate: 'New ID',
-    mocks: 'Endpoints not live yet are mocked on this phone',
-    mocksOn: 'Mocks on',
-    mocksOff: 'Mocks off',
+    mocks: 'Dev: mock stub endpoints',
+    mocksOn: 'On: endpoints that are still stubs (404/405/501) answer with mock data. Demo with this off.',
+    mocksOff: 'Off: every screen shows real server data.',
   },
   driver: {
     title: 'Driver',
-    intro: 'Driver mode preview. One-tap confirm, “On my way” and the booking QR code arrive in phase P3.',
+    intro: 'Driver mode preview. One-tap confirm, “On my way” and a rendered QR code arrive in phase P3.',
     userId: 'Your user ID',
     bookingId: 'Booking ID',
     showQr: 'Get booking QR',
     qrString: 'Booking QR payload',
-    validFrom: (a: string, b: string) => `Valid ${a} – ${b}`,
     rewards: 'Rewards',
     points: 'points',
     grace: 'grace min',

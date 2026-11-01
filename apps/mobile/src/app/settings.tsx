@@ -4,7 +4,7 @@ import { createApi } from '../api';
 import { Button, Card, ErrorLine, Muted, s } from '../components/ui';
 import type { Lot } from '../contract';
 import { errorText, hhmm } from '../lib/format';
-import { newDeviceId, uuidv7 } from '../lib/ids';
+import { newDeviceId } from '../lib/ids';
 import { useApp } from '../lib/settings';
 import { t } from '../strings';
 import { c } from '../theme';
@@ -20,8 +20,8 @@ export default function SettingsScreen() {
 
   // Test against the URL being typed, before it is saved.
   const draftApi = useMemo(
-    () => createApi({ baseUrl: apiUrl.trim(), deviceId, mockPending: settings.mockPending, newId: uuidv7, timeoutMs: 5000 }),
-    [apiUrl, deviceId, settings.mockPending],
+    () => createApi({ baseUrl: apiUrl.trim(), deviceId, devMocks: settings.devMocks, timeoutMs: 5000 }),
+    [apiUrl, deviceId, settings.devMocks],
   );
 
   const test = async () => {
@@ -90,10 +90,10 @@ export default function SettingsScreen() {
       <Card>
         <View style={s.row}>
           <Text style={[s.label, s.flex]}>{t.settings.mocks}</Text>
-          <Switch value={settings.mockPending} onValueChange={(v) => update({ mockPending: v })}
+          <Switch value={settings.devMocks} onValueChange={(v) => update({ devMocks: v })}
             trackColor={{ true: c.brand }} />
         </View>
-        <Muted>{settings.mockPending ? t.settings.mocksOn : t.settings.mocksOff} · /walk_ins · /alerts/:id/resolve · /keys/qr · /bookings/:id/qr</Muted>
+        <Muted>{settings.devMocks ? t.settings.mocksOn : t.settings.mocksOff}</Muted>
       </Card>
     </ScrollView>
   );

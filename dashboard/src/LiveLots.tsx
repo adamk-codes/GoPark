@@ -1,40 +1,19 @@
 import { useEffect, useMemo, useState } from 'react'
-import { api, hhmm, isoDate, label, pct, type Alert } from './api'
+import { AlertsPanel } from './Alerts'
+import { api, hhmm, isoDate, label, pct, useLots } from './api'
 import { base, Chart, useTokens, type Option } from './Chart'
-import type { AuditEntry, Lot, LotForecast, LotOverview, Method, Stay } from './contract'
+import type { LotForecast, Method, Stay } from './contract'
+import { LIVE_POLL_MS, useLive } from './useLive'
 
-const POLL_MS = 5000
 const METHODS: Method[] = ['auto', 'driver', 'attendant', 'inferred']
 const HOURS = Array.from({ length: 19 }, (_, i) => i + 5) // 05:00–23:00
 
 export function LiveLots() {
-  const [lots, setLots] = useState<Lot[]>([])
+  const lots = useLots()
   const [lot, setLot] = useState('AUB')
-  const [ov, setOv] = useState<LotOverview | null>(null)
-  const [stays, setStays] = useState<Stay[]>([])
-  const [alerts, setAlerts] = useState<Alert[]>([])
-  const [audit, setAudit] = useState<AuditEntry[]>([])
+  const { overview: ov, stays, alerts, audit, error, transport, refresh, patchAlert } = useLive(lot)
   const [forecast, setForecast] = useState<LotForecast[] | null>(null)
-  const [error, setError] = useState<string | null>(null)
   const today = ov ? isoDate(ov.now) : null
-
-  useEffect(() => {
-    api.lots().then(setLots).catch((e) => setError(String(e)))
-  }, [])
-
-  useEffect(() => {
-    let alive = true
-    const load = () =>
-      Promise.all([api.overview(lot), api.stays(lot), api.alerts(lot), api.audit(lot)])
-        .then(([o, s, a, l]) => {
-          if (!alive) return
-          setOv(o); setStays(s); setAlerts(a); setAudit(l); setError(null)
-        })
-        .catch((e) => alive && setError(`Can't reach the API: ${e}`))
-    load()
-    const id = setInterval(load, POLL_MS)
-    return () => { alive = false; clearInterval(id) }
-  }, [lot])
 
   useEffect(() => {
     if (!today) return
@@ -55,6 +34,10 @@ export function LiveLots() {
         <select id="lot" value={lot} onChange={(e) => setLot(e.target.value)}>
           {lots.map((l) => <option key={l.id} value={l.id}>{l.name} ({l.kind})</option>)}
         </select>
+        <span className="spacer" />
+        <span className="live-dot" title={transport === 'ws' ? 'Live over WebSocket' : `Polling every ${LIVE_POLL_MS / 1000} s`}>
+          {transport === 'ws' ? 'live' : `updates every ${LIVE_POLL_MS / 1000} s`}
+        </span>
       </div>
       {error && <p className="error">{error}</p>}
       {ov && (
@@ -101,14 +84,10 @@ export function LiveLots() {
               </div>
             </section>
             <section className="card">
-              <div className="card-head"><h2>Alerts</h2></div>
-              <ul className="alerts">
-                {alerts.map((a, i) => <li key={i} className={a.severity}><b>{label(a.type)}</b> {a.message}</li>)}
-                {alerts.length === 0 && <li className="empty">No alerts.</li>}
-              </ul>
+              <AlertsPanel alerts={alerts} onResolved={(a) => { patchAlert(a); refresh() }} />
               <h2>Recent activity</h2>
               <ul className="audit">
-                {audit.map((a) => <li key={a.id}><span className="num muted">{hhmm(a.observed_at)}</span> · {label(a.action)} · {a.entity_id} <span className="muted">({a.device_id})</span></li>)}
+                {audit.map((a) => <li key={a.id}><span className="num muted">{hhmm(a.observed_at)}</span> · {label(a.action)} · {a.entity_id} <span className="muted">({a.device_id ?? a.actor_type})</span></li>)}
                 {audit.length === 0 && <li className="empty">No activity yet.</li>}
               </ul>
             </section>
@@ -121,7 +100,7 @@ export function LiveLots() {
                 <tbody>
                   {parked.map((s) => (
                     <tr key={s.id}>
-                      <td>{s.plate_norm}</td><td>{s.booking_id}</td><td className="num">{hhmm(s.in_at)}</td>
+                      <td><a href={`#detection/${s.lot_id}/${encodeURIComponent(s.id)}`} title="How this car was detected">{s.plate_norm ?? s.id}</a></td><td>{s.booking_id ?? 'walk-in'}</td><td className="num">{hhmm(s.in_at)}</td>
                       <td>{s.in_method ? <span className={`pill ${s.in_method}`}>{s.in_method}</span> : '—'}</td>
                       <td className="num">{s.in_conf != null ? pct(s.in_conf) : '—'}</td>
                     </tr>

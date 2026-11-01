@@ -75,8 +75,9 @@ td:first-child{font-family:var(--font-mono);white-space:nowrap;color:var(--accen
     <span class="eyebrow">GoPark × AUB Hackathon · Challenge 1 hardware</span>
     <h1>GoPark Hardware Kit</h1>
     <p class="lede">What to buy for the detection demo, what to avoid, and which jobs need a person's hands. Tick items as you go; ticks are saved on this phone only.</p>
+    <p class="lede"><b>How detection works:</b> two sensors at the gate catch every car going in or out, and a camera reads the plate to say whose car it is. BLE beacons are no longer needed.</p>
     <div class="budget" aria-label="Budget estimate">
-      <div><b>$60–120</b><span>Core kit (must buy)</span></div>
+      <div><b>$50–100</b><span>Core kit (must buy)</span></div>
       <div><b>+$15–25</b><span>Demo gate (recommended)</span></div>
       <div><b>+$115–165</b><span>Pi plate camera (optional)</span></div>
     </div>
@@ -140,15 +141,18 @@ td:first-child{font-family:var(--font-mono);white-space:nowrap;color:var(--accen
 <script>
 const SHOP = [
   {g:"core", label:"Core kit", items:[
-    {id:"beacon", name:"BLE beacons × 3", price:"$10–25 each",
-     spec:"iBeacon-compatible, nRF52-based, replaceable coin battery (<code>CR2032</code> or <code>CR2477</code>). The vendor app must let you set <code>UUID</code>, <code>Major</code>, <code>Minor</code>, transmit power and interval.",
-     why:"Detects arrival in the underground lot where GPS doesn't work. Two at the ramp, one spare."},
+    {id:"gatesensor", name:"Gate presence sensors × 2 (+1 spare)", price:"$2–8 each",
+     spec:"IR break-beam pairs (emitter + receiver) or <code>HC-SR04</code> ultrasonic modules. 5V, 3-wire. Mounted about 1 m apart along the lane.",
+     why:"Detects every car passing the gate. The order the two trigger tells in from out. The camera then says which car it was."},
+    {id:"camphone", name:"Old phones as cameras × 2 + clamps", price:"$10–20 (clamps)",
+     spec:"Any old Android phone with an IP-webcam app, plus a phone clamp or flexible tripod and a long charging cable.",
+     why:"One faces the gate lane to read plates on entry and exit; one looks down on a few spots."},
     {id:"nfc", name:"NFC sticker tags, pack of 10", price:"$5–12",
      spec:"<code>NTAG213</code> or <code>NTAG215</code>. Add 2–3 <b>anti-metal</b> tags if they'll go on metal pillars or poles.",
-     why:"Tap-to-check-in at the entrance or spot. Works on both iPhone and Android."},
+     why:"Optional fallback: tap-to-check-in when the camera can't read a plate."},
     {id:"esp32", name:"ESP32 dev boards × 2", price:"$6–12 each",
      spec:"<code>ESP32-WROOM-32</code> DevKit (or ESP32-S3/C3) with a USB chip (<code>CP2102</code> or <code>CH340</code>). USB-C preferred.",
-     why:"One acts as a backup beacon Claude can program; the other runs the demo gate."},
+     why:"Reads the two gate sensors and sends each entry or exit to the server over Wi-Fi. The second one is a spare or runs the demo barrier."},
     {id:"cable", name:"USB data cables × 2", price:"$3–6",
      spec:"Matching the ESP32's port (USB-C or micro-USB). Must be <b>data</b> cables.",
      why:"For flashing the boards from the laptop."},

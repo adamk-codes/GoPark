@@ -1,9 +1,10 @@
 import { useCallback } from 'react';
 import { FlatList, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { Badge, ErrorLine, Muted, s } from '../../components/ui';
-import type { AuditEntry, Method, Stay } from '../../contract';
+import type { AuditEntry, Method, Stay, SyncEvent } from '../../contract';
 import { hhmm } from '../../lib/format';
 import { useApp } from '../../lib/settings';
+import { useSync } from '../../lib/sync';
 import { useResource } from '../../lib/useResource';
 import { t } from '../../strings';
 import { c, methodColors } from '../../theme';
@@ -24,21 +25,35 @@ function plateOf(e: AuditEntry): string {
   return after?.plate_norm ?? e.entity_id;
 }
 
+// One History row: a server audit entry, or an action of this phone's still in the outbox or refused.
+type Item = { kind: 'audit'; e: AuditEntry } | { kind: 'pending' | 'conflict'; ev: SyncEvent; title: string; sub: string };
+
 export default function History() {
   const { api, settings } = useApp();
+  const engine = useSync();
   const load = useCallback(() => api.audit(settings.lotId, 100), [api, settings.lotId]);
-  const { data, error, refreshing, refresh } = useResource(load, `${settings.apiUrl}|${settings.lotId}`, POLL_MS);
+  const { data, error, refreshing, refresh } = useResource(load, `${settings.apiUrl}|${settings.lotId}`, POLL_MS,
+    `audit:${settings.lotId}`);
+
+  const local: Item[] = [
+    ...engine.pendingItems().map((p) => ({ kind: 'pending' as const, ev: p.event,
+      title: p.local ? `${t.result[p.local.result]} · ${p.local.booking?.plate ?? p.local.stay?.plate_norm ?? ''}`
+        : t.sync.eventTypes[p.event.type], sub: p.local?.stay?.id ?? String(p.event.body.alert_id ?? '') })),
+    ...engine.conflictItems().map((cf) => ({ kind: 'conflict' as const, ev: cf.event,
+      title: t.sync.eventTypes[cf.event.type] ?? cf.event.type, sub: cf.reason })),
+  ].reverse();
+  const items: Item[] = [...local, ...(data ?? []).map((e) => ({ kind: 'audit' as const, e }))];
 
   return (
     <View style={s.screen}>
       <FlatList
-        data={data ?? []}
-        keyExtractor={(e) => String(e.id)}
+        data={items}
+        keyExtractor={(i) => (i.kind === 'audit' ? String(i.e.id) : i.ev.client_event_id)}
         contentContainerStyle={s.body}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={c.brand} />}
         ListHeaderComponent={<ErrorLine text={error && `${t.common.cantReach(settings.apiUrl)} · ${error}`} />}
         ListEmptyComponent={<Muted>{data ? t.history.empty : t.common.loading}</Muted>}
-        renderItem={({ item }) => <Row e={item} />}
+        renderItem={({ item }) => (item.kind === 'audit' ? <Row e={item.e} /> : <LocalRow item={item} />)}
       />
     </View>
   );
@@ -55,8 +70,26 @@ function Row({ e }: { e: AuditEntry }) {
       </View>
       <View style={st.badges}>
         <Badge label={t.history.methods[m]} {...methodColors[m]} />
-        {/* Everything read from the server is synced; the offline outbox (phase P2) adds pending rows. */}
-        <Badge label={t.history.synced} fg={c.muted} bg={c.border} />
+        {/* Read from the server, so synced; the time is when it happened (offline actions keep theirs). */}
+        <Badge label={t.history.synced} fg={c.ok} bg={c.okSoft} />
+      </View>
+    </View>
+  );
+}
+
+function LocalRow({ item }: { item: Exclude<Item, { kind: 'audit' }> }) {
+  const conflict = item.kind === 'conflict';
+  return (
+    <View style={[st.row, { borderColor: conflict ? c.bad : c.warn }]}>
+      <Text style={[s.mono, st.time]}>{hhmm(item.ev.observed_at)}</Text>
+      <View style={s.flex}>
+        <Text style={st.title}>{item.title}</Text>
+        {item.sub ? <Text style={st.sub}>{item.sub}</Text> : null}
+      </View>
+      <View style={st.badges}>
+        <Badge label={t.history.methods.attendant} {...methodColors.attendant} />
+        <Badge label={conflict ? t.sync.conflict : t.history.pending}
+          fg={conflict ? c.bad : c.warn} bg={conflict ? c.badSoft : c.warnSoft} />
       </View>
     </View>
   );

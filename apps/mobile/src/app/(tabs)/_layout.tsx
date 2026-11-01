@@ -2,12 +2,30 @@ import { router } from 'expo-router';
 import { Tabs } from 'expo-router/js-tabs';
 import { Pressable, StyleSheet, Text, View, type ColorValue } from 'react-native';
 import { useApp } from '../../lib/settings';
+import { useSync } from '../../lib/sync';
 import { t } from '../../strings';
 import { c } from '../../theme';
 
 // Glyph icons: no icon font to load, and they work in plain Expo Go.
 function Glyph({ ch, color }: { ch: string; color: ColorValue }) {
   return <Text style={{ fontSize: 22, color }}>{ch}</Text>;
+}
+
+// "Online" / "Offline · 3 pending" under the title. Tapping it syncs now.
+function HeaderTitle({ lotId }: { lotId: string }) {
+  const engine = useSync();
+  const { online, pending } = engine.status();
+  const color = online === false ? c.warn : online ? c.ok : c.muted;
+  return (
+    <Pressable onPress={() => engine.kick()} accessibilityRole="button" accessibilityLabel={t.sync.syncNow}
+      style={st.title} hitSlop={6}>
+      <Text style={st.titleText} numberOfLines={1}>{t.appName} · {lotId}</Text>
+      <View style={st.statusRow}>
+        <View style={[st.dot, { backgroundColor: color }]} />
+        <Text style={[st.statusText, { color }]} numberOfLines={1}>{t.sync.status(online, pending)}</Text>
+      </View>
+    </Pressable>
+  );
 }
 
 function HeaderActions() {
@@ -31,7 +49,7 @@ export default function TabLayout() {
       screenOptions={{
         tabBarActiveTintColor: c.brand,
         tabBarLabelStyle: { fontSize: 13, fontWeight: '700' },
-        headerTitle: `${t.appName} · ${settings.lotId}`,
+        headerTitle: () => <HeaderTitle lotId={settings.lotId} />,
         headerTintColor: c.text,
         headerRight: () => <HeaderActions />,
       }}
@@ -49,4 +67,9 @@ const st = StyleSheet.create({
   action: { paddingHorizontal: 8, paddingVertical: 6 },
   actionText: { color: c.brand, fontWeight: '700', fontSize: 15 },
   gear: { color: c.brand, fontSize: 22 },
+  title: { paddingVertical: 2 },
+  titleText: { fontSize: 17, fontWeight: '700', color: c.text },
+  statusRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  dot: { width: 8, height: 8, borderRadius: 4 },
+  statusText: { fontSize: 12, fontWeight: '700' },
 });
