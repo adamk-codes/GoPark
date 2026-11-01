@@ -40,15 +40,16 @@ def fit(scores: np.ndarray, labels: np.ndarray, enabled: bool = True) -> dict:
     """Isotonic map score → probability as knots {x, y, n}. Identity when off or without data."""
     if not enabled or len(scores) < 20 or labels.min() == labels.max():
         return {**IDENTITY, "n": int(len(scores)), "fitted": False}
-    # Pool equal scores first, then PAVA weighted by count; knots at both ends of each block.
+    # Pool equal scores first, then PAVA weighted by count. Knots at each block's weighted mean
+    # score ("centred" isotonic regression): the map is strictly increasing between knots, so it
+    # doesn't flatten the ranking into ties (which would hurt the next-booking pick).
     ux, inv, cnt = np.unique(np.asarray(scores, float), return_inverse=True, return_counts=True)
     mean_y = np.bincount(inv, weights=np.asarray(labels, float)) / cnt
     res = isotonic_regression(mean_y, weights=cnt.astype(float), increasing=True)
     fitted, b = np.clip(res.x, 0.0, 1.0), res.blocks
-    xs, ys = [], []
-    for lo, hi in zip(b[:-1], b[1:] - 1):
-        xs += [ux[lo]] if lo == hi else [ux[lo], ux[hi]]
-        ys += [fitted[lo]] * (1 if lo == hi else 2)
+    xs = [float(np.average(ux[lo:hi], weights=cnt[lo:hi])) for lo, hi in zip(b[:-1], b[1:])]
+    ys = [float(fitted[lo]) for lo in b[:-1]]
+    xs, ys = [float(ux[0])] + xs + [float(ux[-1])], [ys[0]] + ys + [ys[-1]]
     return {"x": [round(float(v), 5) for v in xs], "y": [round(float(v), 5) for v in ys],
             "n": int(len(scores)), "fitted": True}
 
