@@ -36,7 +36,8 @@
           "recordAudioAndroid": false,
           "enableBackgroundPlayback": false
         }
-      ]
+      ],
+      "expo-sqlite"
     ],
     "scheme": "gopark",
     "experiments": {
