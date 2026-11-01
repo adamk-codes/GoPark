@@ -598,13 +598,46 @@ def resolve_gate(conn, lot_id: str, kind: str, at: datetime, booking_id: str | N
                  (booking_id, stay_id, event["signal_id"]))
 
 
+def _suggestion_covers(conn, event) -> bool:
+    """A car-look signal already opened a waiting stay for this passage.
+
+    Resolve the gate row so it does not also become an identity-unknown car. The gate signal is
+    not attached to the booking, so it does not add the pairing bonus and cannot lift a
+    vehicle-only score over the auto-confirm cap. No suggestion: the caller records identity unknown.
+    """
+    window = timedelta(seconds=float(CONFIG.get("gate_pairing", {}).get("window_s", 8)))
+    observed = db.parse(event["observed_at"])
+    row = conn.execute(
+        "SELECT id, matched_booking_id FROM signals WHERE source = 'camera_vehicle' AND lot_id = ? AND kind = ? "
+        "AND matched_booking_id IS NOT NULL AND observed_at BETWEEN ? AND ? "
+        "AND NOT EXISTS (SELECT 1 FROM gate_events g WHERE g.plate_signal_id = signals.id) "
+        "ORDER BY ABS(julianday(observed_at) - julianday(?)) LIMIT 1",
+        (event["lot_id"], event["kind"], db.utc(observed - window), db.utc(observed + window),
+         event["observed_at"])).fetchone()
+    if row is None:
+        return False
+    stay = conn.execute(
+        "SELECT id, state FROM stays WHERE booking_id = ? ORDER BY updated_at DESC LIMIT 1",
+        (row["matched_booking_id"],)).fetchone()
+    if stay is None or stay["state"] not in ("ARRIVING", "CHECKED_IN", "OVERSTAY", "UNCONFIRMED_DEPARTURE"):
+        return False
+    conn.execute(
+        "UPDATE gate_events SET status = 'resolved', plate_signal_id = ?, booking_id = ?, stay_id = ? "
+        "WHERE signal_id = ?",
+        (row["id"], row["matched_booking_id"], stay["id"], event["signal_id"]))
+    return True
+
+
 def settle_gates(conn) -> int:
-    """Gate events still unpaired after the pairing window become unidentified."""
+    """Gate events still unpaired after the pairing window become unidentified, unless a car-look
+    suggestion is already waiting on the driver for that passage."""
     now = db.now(conn)
     window = timedelta(seconds=float(CONFIG.get("gate_pairing", {}).get("window_s", 8)))
     events = conn.execute("SELECT * FROM gate_events WHERE status = 'pending' AND observed_at < ? ORDER BY observed_at",
                           (db.utc(now - window),)).fetchall()
     for event in events:
+        if _suggestion_covers(conn, event):
+            continue
         _unidentified(conn, event, now)
     conn.commit()
     return len(events)

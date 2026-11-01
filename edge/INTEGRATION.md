@@ -78,24 +78,36 @@ Wi-Fi at a gate drops. Never lose an event, and never send one twice as two diff
 The API stores each `client_event_id` once (`INSERT OR IGNORE`), so resending after a lost response is
 harmless. Late events still pair if the plate read arrives too ("resolved later" in CONTRACT §6).
 
-## 5. Optional: wake the plate reader
+## 5. Wake the plate reader
 
 By default the camera reads all the time and posts plates on its own. For one camera per gate,
 especially one camera serving both directions, run it in triggered mode. It then posts only the best
-plate read within ±8 s of each sensor event, with the sensor's direction and `gate_id` / `lane`:
+plate read within ±8 s of each sensor event, with the sensor's direction and `gate_id` / `lane`.
+
+**Preferred.** The reader polls `GET /signals?source=gate_sensor&lot_id=&after_id=` (CONTRACT §7; that
+endpoint exists). One command reads the lane from `config/gates.yaml` (phone URL, ROI, fps, confidence):
+
+```bash
+uv run --group edge python -m edge.run_gate --lot-id AUB --phone http://PHONE_IP:8080
+```
+
+That starts `plate_reader` with `--kind auto --trigger api --cars --vehicle-match`. The same flags by hand:
+
+```bash
+uv run --group edge python -m edge.camera.plate_reader --source http://PHONE_IP:8080/video --lot-id AUB --device-id cam-gate-1 --kind auto --trigger api --cars --vehicle-match --api http://localhost:8000
+```
+
+The ESP32 only POSTs to the API. It does not need a second post. Ctrl+C stops `run_gate`, including on Windows.
+
+**Fallback.** `--trigger listen`, and also POST the same JSON to `http://<laptop-ip>:8090/gate`:
+fire-and-forget, timeout ≤ 1 s, no retry. The API post stays the one that counts. The reader stamps the
+event when it *arrives*, so a few hundred ms of Wi-Fi delay does not matter.
 
 ```bash
 uv run --group edge python -m edge.camera.plate_reader --source http://PHONE_IP:8080/video --lot-id AUB --device-id cam-gate-1 --kind auto --trigger listen --listen 0.0.0.0:8090
 ```
 
-The reader needs to hear about each event. **Also** POST the same JSON to `http://<laptop-ip>:8090/gate`:
-fire-and-forget, timeout ≤ 1 s, no retry. The API post stays the one that counts. The reader stamps the
-event when it *arrives*, so a few hundred ms of Wi-Fi delay does not matter.
-
-`--trigger api` would read the events from the API instead. It needs a `GET /signals?source=&lot_id=&after_id=`
-endpoint, which the API does not have yet (`WS /live` only pushes stay and alert changes). Until ops adds
-it, use `listen`. Without the extra post, use the default always-on mode (`--kind enter` / `exit`): the
-API still pairs on `observed_at`.
+Without a trigger, use the default always-on mode (`--kind enter` / `exit`): the API still pairs on `observed_at`.
 
 ## 6. Check pairing
 
@@ -145,3 +157,20 @@ Lots of these means the clock is off, the camera is missing plates, or `lot_id` 
 - The camera faces the same lane and should see the plate while the car is between the beams.
 - Label each ESP32 with its `device_id` and `gate_id`.
 - Check with `--dry-run` first, then one real car each way, then look at the Detection log.
+
+## 8. Firmware
+
+`edge/firmware/gate_sensor/gate_sensor.ino` is the ESP32 sketch (Arduino core). It follows §2–§4, and the
+same rules as `edge/gate_logic.py` (the unit tests check that module):
+
+- one UUID v4 per completed passage, reused on every retry;
+- `observed_at` is the second beam, to the second, not the POST time;
+- a 50-deep RAM queue, dropping the oldest when it is full;
+- backoff 1, 2, 5, then 10 seconds; `422` drops that entry; `2xx` removes it (`duplicates` is fine);
+- A then B is `enter`, B then A is `exit`; one beam, or A-B-A, is not an event.
+
+`CLOCK_MODE 0` uses NTP (`EET-2EEST,M3.5.0/0,M10.5.0/0`) and the camera must use `--clock field`.
+`CLOCK_MODE 1` reads `GET /dev/clock` every 60 s, matching the camera's default `--clock demo`.
+Edit the defines at the top (Wi-Fi, API host, lot, pins), flash, and diff a passage against
+`edge/sensor_sim.py --dry-run` before pointing it at the live API. On the serial monitor, `e` or `x`
+then Enter posts one passage without the beams.

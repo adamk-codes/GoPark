@@ -105,6 +105,14 @@ uv run --group edge python -m edge.camera.plate_reader --source http://PHONE_IP:
 - `--kind enter` or `exit` with a trigger makes the camera ignore the other direction.
 - `--gate-id` / `--lane` filter the events.
 - `--trigger api` polls the API's `GET /signals` endpoint; use `listen` if a local sensor integration needs push.
+
+One command for the phone at the gate. ROI, fps, confidence and the flags above come from `config/gates.yaml`:
+
+```bash
+uv run --group edge python -m edge.run_gate --lot-id AUB --phone http://PHONE_IP:8080
+```
+
+Ctrl+C stops it, including on Windows. Add `--clock field` when the ESP32 is on NTP. The yaml default is `demo`.
 - If no plate qualifies, the reader posts nothing. The API then records the sensor event as "identity unknown".
 
 **Car-look fallback (T1, suggestion only).** With `uv sync --group edge`, add `--cars --vehicle-match` to the
