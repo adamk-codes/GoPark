@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -13,14 +14,19 @@ ROOT = Path(__file__).resolve().parents[1]
 SCHEMAS = ROOT / "contract" / "schemas"
 
 
+# Point the API at a temp folder now, before any test module imports `api.db` (it reads these at import),
+# so no test can touch the developer's data/gopark.sqlite.
+WORKDIR = Path(tempfile.mkdtemp(prefix="gopark-test-"))
+(WORKDIR / "runs").mkdir()
+os.environ["GOPARK_DATA"] = str(WORKDIR)
+os.environ["GOPARK_DB"] = str(WORKDIR / "test.sqlite")
+os.environ["GOPARK_RUNS"] = str(WORKDIR / "runs")
+os.environ["GOPARK_SCHEDULER"] = "0"   # tests drive time-based rules with /dev/tick, not the 30 s loop
+
+
 @pytest.fixture(scope="session")
-def workdir(tmp_path_factory) -> Path:
-    d = tmp_path_factory.mktemp("gopark")
-    (d / "runs").mkdir()
-    os.environ["GOPARK_DATA"] = str(d)
-    os.environ["GOPARK_DB"] = str(d / "test.sqlite")
-    os.environ["GOPARK_RUNS"] = str(d / "runs")
-    os.environ["GOPARK_SCHEDULER"] = "0"   # tests drive time-based rules with /dev/tick, not the 30 s loop
+def workdir() -> Path:
+    d = WORKDIR
     subprocess.run([sys.executable, "-m", "tools.generator", "--users", "60", "--weeks", "12",
                     "--seed", "3", "--out", str(d)], cwd=ROOT, check=True, capture_output=True)
     return d

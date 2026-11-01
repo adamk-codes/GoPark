@@ -149,32 +149,41 @@ def reset(conn, data_dir: Path = DATA_DIR, prepark: bool = True) -> dict:
             "demo_now": now(conn).isoformat()}
 
 
+def _columns(conn, table: str) -> set[str]:
+    return {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+
+
 def _migrate(conn) -> None:
-    """Columns and indexes added after a table existed (CREATE TABLE IF NOT EXISTS won't add them)."""
-    signal_columns = {r["name"] for r in conn.execute("PRAGMA table_info(signals)")}
-    if "matched_booking_id" not in signal_columns:
-        conn.execute("ALTER TABLE signals ADD COLUMN matched_booking_id TEXT")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_signals_matched ON signals(matched_booking_id)")
+    """Add columns that newer code expects to tables an older DB already has.
+
+    Runs before schema.sql on an existing DB (its triggers and indexes name these columns,
+    and CREATE TABLE IF NOT EXISTS never adds them), and again after it for fresh tables.
+    """
+    added = {"bookings": [("updated_at", "TEXT NOT NULL DEFAULT ''")],
+             "alerts": [("updated_at", "TEXT NOT NULL DEFAULT ''"), ("estimated_fee", "REAL"),
+                        ("resolved_by", "TEXT"), ("resolved_at", "TEXT")],
+             "signals": [("matched_booking_id", "TEXT")]}
+    for table, columns in added.items():
+        have = _columns(conn, table)
+        if not have:
+            continue  # table not created yet; schema.sql makes it complete
+        for name, decl in columns:
+            if name not in have:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+                if (table, name) == ("bookings", "updated_at"):
+                    conn.execute("UPDATE bookings SET updated_at = ? WHERE updated_at = ''", (utc(datetime.now(timezone.utc)),))
+                if (table, name) == ("alerts", "updated_at"):
+                    conn.execute("UPDATE alerts SET updated_at = created_at WHERE updated_at = ''")
+    if _columns(conn, "signals"):
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_signals_matched ON signals(matched_booking_id)")
+    conn.commit()
 
 
 def ensure_seeded(conn) -> None:
+    _migrate(conn)
     conn.executescript((ROOT / "api" / "schema.sql").read_text(encoding="utf-8"))
     _migrate(conn)
     has = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='bookings'").fetchone()
-    if has:
-        booking_columns = {r["name"] for r in conn.execute("PRAGMA table_info(bookings)")}
-        if "updated_at" not in booking_columns:
-            conn.execute("ALTER TABLE bookings ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''")
-            conn.execute("UPDATE bookings SET updated_at = ? WHERE updated_at = ''", (utc(now(conn)),))
-        alert_table = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='alerts'").fetchone()
-        if alert_table:
-            alert_columns = {r["name"] for r in conn.execute("PRAGMA table_info(alerts)")}
-            if "updated_at" not in alert_columns:
-                conn.execute("ALTER TABLE alerts ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''")
-                conn.execute("UPDATE alerts SET updated_at = created_at WHERE updated_at = ''")
-            if "estimated_fee" not in alert_columns:
-                conn.execute("ALTER TABLE alerts ADD COLUMN estimated_fee REAL")
-        conn.commit()
     if not has or not conn.execute("SELECT 1 FROM bookings LIMIT 1").fetchone():
         if not (DATA_DIR / "bookings.csv").exists():
             raise RuntimeError("data/bookings.csv missing; run `uv run python -m tools.generator` first")
