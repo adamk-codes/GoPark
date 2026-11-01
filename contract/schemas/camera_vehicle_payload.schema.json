@@ -29,6 +29,8 @@
       "maxItems": 10
     },
     "top_margin": { "type": "number", "minimum": 0, "maximum": 1 },
+    "expected_count": { "type": "integer", "minimum": 1 },
+    "appearance_count": { "type": "integer", "minimum": 1 },
     "model": { "type": "string" }
   },
   "required": ["candidates", "top_margin"],

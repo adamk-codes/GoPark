@@ -50,9 +50,15 @@ def d(iso: str) -> date:
 
 
 def test_every_persona_appears_with_valid_routines(mixed):
-    truth, _, _ = mixed
+    truth, rows, _ = mixed
     assert set(truth["generated_with"]["personas"]) == set(PERSONAS)
     for u, v in truth["users"].items():
+        vehicle = v["vehicle"]
+        assert vehicle["color"] in ("white", "silver", "black", "grey", "blue", "red", "green", "beige")
+        assert vehicle["body"] in ("sedan", "hatchback", "suv", "pickup", "van")
+        assert vehicle["make"] in ("Kia", "Toyota", "Hyundai", "Nissan", "Mercedes", "BMW")
+        assert all(r["vehicle_color"] == vehicle["color"] and r["vehicle_body"] == vehicle["body"]
+                   and r["vehicle_make"] == vehicle["make"] for r in rows if r["user_id"] == u)
         for r in v["routines"]:
             assert {"days", "center", "location_id", "active_from", "active_to"} <= set(r), u
             assert r["days"] and all(x in ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun") for x in r["days"])

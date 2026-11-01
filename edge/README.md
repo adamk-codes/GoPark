@@ -6,6 +6,7 @@ Old phones stream video to the laptop; two scripts turn that into signals for `P
 | Script | Camera | Sends |
 |---|---|---|
 | `plate_reader.py` | entrance (or exit) phone at plate height | `camera_plate`, kind `enter` / `exit`, `payload.plate_norm` (+ `ocr_conf`) |
+| `plate_reader.py --vehicle-match` | same lane camera with `--cars` and gate trigger | suggestion-only `camera_vehicle` if no plate qualifies |
 | `spot_watcher.py` | overhead phone over a few spots | `camera_spot`, kind `occupied` / `vacant`, `payload.space_id` (+ `coverage`) |
 | `define_spots.py` | (helper) | click spot polygons on one frame → `spots.json` |
 | `trigger.py` | (used by `plate_reader --trigger`) | pairs plate reads with `gate_sensor` events |
@@ -16,7 +17,8 @@ The real gate sensor (an ESP32 with two beams) is built separately; [INTEGRATION
 Every signal has a UUID `client_event_id`, a `device_id` (`cam-entrance-1`, `cam-overhead-1`), `lot_id` and
 `observed_at`, and is checked against `contract/schemas/signal.schema.json` before it leaves.
 **Privacy:** frames are processed in memory and dropped. No image or video is written; only plate text
-and spot ids are sent.
+and spot ids are sent by the base readers. The opt-in T1 matcher also sends booking IDs and coarse vehicle
+appearance classes, never an image or face/plate crop.
 
 ## Install
 
@@ -36,6 +38,7 @@ Download sizes (CPU only, Windows, measured here):
 | Plate OCR `cct_xs_v2_global.onnx` | 3.2 MB | first run → `~/.cache/fast-plate-ocr` |
 | Car detector `yolo11n.pt` | 5.4 MB | first `--cars` / `spot_watcher --detector yolo` run → `edge/models/` (gitignored) |
 | EasyOCR Arabic + English (detector + recogniser) | 285 MB | first `--ocr auto|easyocr` run → `~/.EasyOCR` (load ≈ 15 s once cached) |
+| Hugging Face CLIP model | model-dependent (base model ≈ 600 MB) | first `--vehicle-match` run → Hugging Face cache |
 
 Fetch the models before the demo, on good Wi-Fi: run each script once with `--dry-run`.
 
@@ -101,8 +104,19 @@ uv run --group edge python -m edge.camera.plate_reader --source http://PHONE_IP:
 - The sensor (or the simulator) also POSTs its event to `http://<laptop>:8090/gate`.
 - `--kind enter` or `exit` with a trigger makes the camera ignore the other direction.
 - `--gate-id` / `--lane` filter the events.
-- `--trigger api` needs a `GET /signals` the API doesn't have yet.
+- `--trigger api` polls the API's `GET /signals` endpoint; use `listen` if a local sensor integration needs push.
 - If no plate qualifies, the reader posts nothing. The API then records the sensor event as "identity unknown".
+
+**Car-look fallback (T1, suggestion only).** With `uv sync --group edge`, add `--cars --vehicle-match` to the
+triggered command. When a gate event's plate window closes without a plate, the reader uses the nearest car crop
+(kept in memory only), fetches `GET /lots/{lot_id}/expected_vehicles` for the event time, and posts ranked
+`camera_vehicle` candidates. It never writes or sends an image. Fusion considers score margin and how many
+expected vehicles share the same color/body; vehicle-only evidence is capped below auto-confirm. It can suggest
+a booking or ask the driver, but cannot check a vehicle in by itself.
+
+```bash
+uv run --group edge python -m edge.camera.plate_reader --source http://PHONE_IP:8080/video --lot-id AUB --device-id cam-gate-1 --kind auto --trigger api --cars --vehicle-match --clip-model openai/clip-vit-base-patch32
+```
 
 Test it without hardware:
 
@@ -173,3 +187,15 @@ and replace this section with its numbers.
 Synthetic plates are much easier than real Lebanese plates (dirt, glare, frames, real fonts). Treat these
 numbers as an **upper bound**: real-plate accuracy is unmeasured. The attendant must be able to confirm or
 correct the OCR text.
+
+### Car-look matching
+
+**Not measured yet.** The repo does not contain a licensed, labeled vehicle image set, so no CLIP accuracy is
+claimed. Stub-model unit tests only exercise rank ordering and the safety cap; they are not accuracy results.
+For a licensed dataset, make a CSV manifest with columns `image,truth_booking_id,truth_color,truth_body,expected_vehicles`;
+the last column is a JSON array in the API's expected-vehicle shape. Include groups with 1, 3, 5 and 10 expected
+cars. The evaluator reports top-1 color, body and booking-match accuracy separately, processing images in memory:
+
+```bash
+uv run --group edge python -m edge.tests.eval_vehicle_matcher --manifest edge/tests/data/vehicle_eval.csv --out edge/tests/vehicle_eval_report.json
+```

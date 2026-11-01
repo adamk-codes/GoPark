@@ -10,6 +10,7 @@ max_prior: 0.99                # cap on C2 priors
 departure_prior: 0.4
 freshness_half_life_min: 120   # older evidence counts less (tuned from 15: buffered underground signals)
 min_evidence_log_lr: 0.0       # auto-confirm also needs this much evidence beyond the prior
+camera_vehicle_max_probability: 0.94 # vehicle appearance alone may ask the driver, never auto-confirm
 min_stay_min: 5                # departure evidence must come this long after the arrival
 elsewhere_factor: 0.0          # weak arrival evidence at another lot counts this much against this lot
 strong_elsewhere_log_lr: 4.0   # strong arrival evidence (plate, NFC, QR) at another lot counts against this lot
@@ -35,3 +36,4 @@ signals:
   booking_qr:    {definitive: true}
   attendant:     {definitive: true}
   driver_confirm: {definitive: true}
+  camera_vehicle: {log_lr: 3.0, max_log_lr: 3.0, margin_scale: 0.08, min_score: 0.16}

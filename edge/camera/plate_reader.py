@@ -26,6 +26,7 @@ import re
 import statistics
 import sys
 import time
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -137,8 +138,13 @@ class PlateReader:
         return out
 
     def read_frame(self, img: np.ndarray) -> list[Read]:
+        return self.read_frame_with_cars(img)[0]
+
+    def read_frame_with_cars(self, img: np.ndarray) -> tuple[list[Read], list[np.ndarray]]:
+        """OCR plate detections and return vehicle regions for an optional in-memory matcher."""
         reads = []
-        for _, _, sub in self.regions(img):
+        regions = self.regions(img)
+        for _, _, sub in regions:
             for d in self.det.predict(sub):
                 b = d.bounding_box
                 x1, y1 = max(0, b.x1), max(0, b.y1)
@@ -146,7 +152,7 @@ class PlateReader:
                 if crop.size == 0 or crop.shape[1] < 20:
                     continue
                 reads.append(self.ocr.read(crop))
-        return reads
+        return reads, [sub for _, _, sub in regions]
 
 
 def main(argv: list[str] | None = None) -> dict:
@@ -166,6 +172,9 @@ def main(argv: list[str] | None = None) -> dict:
     ap.add_argument("--min-conf", type=float, default=0.85, help="auto: below this the fast read goes to EasyOCR")
     ap.add_argument("--cars", action="store_true", help="only search plates inside YOLO vehicle boxes")
     ap.add_argument("--car-weights", default="yolo11n.pt")
+        ap.add_argument("--vehicle-match", action="store_true",
+                        help="suggest expected vehicles with zero-shot CLIP when the gate plate is unreadable")
+        ap.add_argument("--clip-model", default="openai/clip-vit-base-patch32", help="Hugging Face CLIP model id")
     ap.add_argument("--roi", help="x,y,w,h crop of the lane, in pixels")
     ap.add_argument("--window", type=int, default=5)
     ap.add_argument("--need", type=int, default=2, help="frames a plate must be read in before it is sent")
@@ -185,10 +194,13 @@ def main(argv: list[str] | None = None) -> dict:
     a = ap.parse_args(argv)
     if a.kind == "auto" and a.trigger == "none":
         ap.error("--kind auto needs --trigger listen or --trigger api (the direction comes from the gate sensor)")
+    if a.vehicle_match and (a.trigger == "none" or not a.cars):
+        ap.error("--vehicle-match requires --cars and --trigger listen|api")
 
     roi = tuple(int(v) for v in a.roi.split(",")) if a.roi else None
     t0 = time.perf_counter()
-    reader = PlateReader(PlateOCR(a.ocr, min_conf=a.min_conf), cars=a.cars, car_weights=a.car_weights, roi=roi)
+    reader = PlateReader(PlateOCR(a.ocr, min_conf=a.min_conf), cars=a.cars or a.vehicle_match,
+                         car_weights=a.car_weights, roi=roi)
     print(f"[plate_reader] models loaded in {time.perf_counter() - t0:.1f}s", file=sys.stderr)
     clock = Clock(a.clock, a.api)
     sink = SignalSink(a.api, a.dry_run)
@@ -196,6 +208,11 @@ def main(argv: list[str] | None = None) -> dict:
     timer = Timer()
     best: dict[str, float] = {}
     pairer = events = None
+    vehicle_matcher = None
+    car_buffer: deque[tuple[float, np.ndarray]] = deque()
+    if a.vehicle_match:
+        from edge.camera.vehicle_matcher import load_matcher
+        vehicle_matcher = load_matcher(a.clip_model)
     if a.trigger != "none":
         from edge.camera.trigger import ApiPollSource, GatePairer, ListenSource
         pairer = GatePairer(a.lot_id, a.window_s, a.need, a.kind, a.gate_id, a.lane)
@@ -213,6 +230,39 @@ def main(argv: list[str] | None = None) -> dict:
                 stats["unpaired_events"] += 1
                 print(f"[trigger] {pr.event.kind} at {pr.event.gate_id}: no plate read >= {a.need}x "
                       f"within +-{a.window_s:g}s {pr.candidates}", file=sys.stderr)
+                if vehicle_matcher is not None:
+                    from edge.camera.common import http_json
+
+                    observed_at = pr.event.observed_at or clock.iso()
+                    try:
+                        expected = http_json("GET", f"{a.api}/lots/{a.lot_id}/expected_vehicles",
+                                             params={"around": observed_at, "window_min": 20})
+                    except Exception as exc:
+                        print(f"[vehicle_match] expected vehicles unavailable: {exc}", file=sys.stderr)
+                        continue
+                    crops = [(stamp, crop) for stamp, crop in car_buffer
+                             if abs(stamp - pr.event.t) <= a.window_s]
+                    if not crops or not expected:
+                        print(f"[vehicle_match] skipped: {len(crops)} car crop(s), "
+                              f"{len(expected or [])} expected vehicle(s)", file=sys.stderr)
+                        continue
+                    ranked = []
+                    for stamp, crop in crops:
+                        result = vehicle_matcher.match(crop, expected)
+                        if result and result.candidates:
+                            ranked.append((result.candidates[0]["score"] + result.top_margin, stamp, result))
+                    if not ranked:
+                        continue
+                    _, used_stamp, result = max(ranked, key=lambda row: row[0])
+                    car_buffer_items = [(stamp, crop) for stamp, crop in car_buffer if stamp != used_stamp]
+                    car_buffer.clear()
+                    car_buffer.extend(car_buffer_items)
+                    payload = result.as_payload(a.clip_model)
+                    payload.update({k: v for k, v in (("gate_id", pr.event.gate_id), ("lane", pr.event.lane))
+                                    if v is not None})
+                    sink.send(make_signal(device_id=a.device_id, lot_id=a.lot_id, source="camera_vehicle",
+                                          kind=pr.event.kind, observed_at=observed_at, payload=payload))
+                    stats["vehicle_suggestions"] = stats.get("vehicle_suggestions", 0) + 1
                 continue
             payload = {"plate_norm": pr.plate, "ocr_conf": round(pr.conf, 2), "reads": pr.reads}
             for k, v in (("gate_id", pr.event.gate_id), ("lane", pr.event.lane)):
@@ -226,7 +276,15 @@ def main(argv: list[str] | None = None) -> dict:
         while True:
             for t, img in frames(a.source, a.every, a.fps, realtime=a.realtime):
                 start = time.perf_counter()
-                reads = reader.read_frame(img)
+                if vehicle_matcher is not None:
+                    reads, crops = reader.read_frame_with_cars(img)
+                    frame_t = time.monotonic()
+                    car_buffer.extend((frame_t, crop) for crop in crops)
+                    keep_after = frame_t - max(30.0, a.window_s * 4)
+                    while car_buffer and car_buffer[0][0] < keep_after:
+                        car_buffer.popleft()
+                else:
+                    reads = reader.read_frame(img)
                 timer.add(time.perf_counter() - start)
                 if a.verbose:
                     print(f"[frame {n} t={t:.1f}] " + ", ".join(f"{r.raw!r}->{r.plate} {r.conf:.2f} {r.engine}"
@@ -259,7 +317,8 @@ def main(argv: list[str] | None = None) -> dict:
         send_pairings(pairer.due(time.monotonic(), flush=True))
         events.close()
     sink.flush()
-    stats.update({"signals": len(sink.sent), "plates": [s["payload"]["plate_norm"] for s in sink.sent],
+    stats.update({"signals": len(sink.sent), "plates": [s["payload"]["plate_norm"] for s in sink.sent
+                                                           if "plate_norm" in s["payload"]],
                   "per_frame": timer.summary()})
     print(json.dumps(stats), file=sys.stderr)
     return stats

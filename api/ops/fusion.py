@@ -75,6 +75,27 @@ def signal_log_lr(sig: dict, direction: str, cfg: dict) -> float | None:
     if sign == 0:
         return None
     spec = cfg.get("signals", {}).get(sig["source"], {})
+    if sig["source"] == "camera_vehicle":
+        payload = sig.get("payload") or {}
+        candidates = payload.get("candidates") or []
+        if not candidates or candidates[0].get("booking_id") != sig.get("booking_id"):
+            return None
+        top_score = max(0.0, float(candidates[0].get("score", 0)))
+        if top_score < float(spec.get("min_score", 0)):
+            return None
+        top_vehicle = candidates[0].get("vehicle") or {}
+        same_appearance = sum(
+            1 for candidate in candidates
+            if (candidate.get("vehicle") or {}).get("color") == top_vehicle.get("color")
+            and (candidate.get("vehicle") or {}).get("body") == top_vehicle.get("body")
+        )
+        same_appearance = max(1, int(payload.get("appearance_count", same_appearance)))
+        margin = max(0.0, float(payload.get("top_margin", 0)))
+        margin_scale = max(0.001, float(spec.get("margin_scale", 0.08)))
+        margin_factor = min(1.0, margin / margin_scale)
+        uniqueness = 1.0 / max(1, same_appearance)
+        evidence = float(spec.get("log_lr", 0)) * margin_factor * uniqueness
+        return min(float(spec.get("max_log_lr", evidence)), evidence) * sign
     if sig.get("elsewhere"):
         # Arriving at another lot is evidence against arriving here; nothing else from there counts.
         if direction != "arrival" or sign < 0:
@@ -140,20 +161,31 @@ def decide(stay: dict | None, signals: list[dict], now: datetime, prior: float, 
     in_at = stay["in_at"] if stay else None
     out = {"state": state, "arrival": None, "departure": None, "in_at": None, "out_at": None,
            "arrival_p": None, "arrival_points": [], "departure_p": None, "departure_points": [],
-           "contradiction": False}
+           "contradiction": False, "vehicle_suggestion": None}
 
     if state in (None, "ARRIVING"):
         p, points = score(signals, prior, now, "arrival", cfg)
-        out.update(arrival_p=p, arrival_points=points)
         denied = max((s["observed_at"] for s in here
                       if (signal_log_lr(s, "arrival", cfg) or 0) <= -DEFINITIVE_LOG_LR), default=None)
         arrivals = [s for s in here if _is_positive(s, "arrival", cfg) and (denied is None or s["observed_at"] > denied)]
         definitive = any(cfg["signals"].get(s["source"], {}).get("definitive") for s in arrivals)
+        vehicle_only = bool(arrivals) and all(s["source"] == "camera_vehicle" for s in arrivals)
+        if vehicle_only:
+            p = min(p, float(cfg.get("camera_vehicle_max_probability", 0.94)))
+            for point in points:
+                point["probability"] = min(point["probability"], float(cfg.get("camera_vehicle_max_probability", 0.94)))
+            vehicle_signal = next((s for s in reversed(arrivals) if s["source"] == "camera_vehicle"), None)
+            if vehicle_signal:
+                candidates = vehicle_signal.get("payload", {}).get("candidates", [])
+                if candidates:
+                    out["vehicle_suggestion"] = {
+                        **candidates[0], "top_margin": vehicle_signal.get("payload", {}).get("top_margin", 0)}
+        out.update(arrival_p=p, arrival_points=points)
         contradiction = bool(strong_elsewhere) and any(s["source"] in STRONG for s in arrivals)
         out["contradiction"] = contradiction
         if arrivals and p >= ask:
             strength = _logit(p) - _logit(prior)
-            confident = p >= auto and (definitive or (
+            confident = not vehicle_only and p >= auto and (definitive or (
                 not contradiction and strength >= float(cfg.get("min_evidence_log_lr", 0))))
             new_state = "CHECKED_IN" if confident else "ARRIVING"
             if new_state != state:
@@ -168,9 +200,16 @@ def decide(stay: dict | None, signals: list[dict], now: datetime, prior: float, 
         prior_out = float(cfg.get("departure_prior", cfg.get("default_prior", 0.3)))
         dp, dpoints = score(after, prior_out, now, "departure", cfg)
         out.update(departure_p=dp, departure_points=dpoints)
-        exits = sorted(s["observed_at"] for s in after if _is_positive(s, "departure", cfg))
+        exit_signals = [s for s in after if _is_positive(s, "departure", cfg)]
+        vehicle_only_exit = bool(exit_signals) and all(s["source"] == "camera_vehicle" for s in exit_signals)
+        if vehicle_only_exit:
+            dp = min(dp, float(cfg.get("camera_vehicle_max_probability", 0.94)))
+            for point in dpoints:
+                point["probability"] = min(point["probability"], float(cfg.get("camera_vehicle_max_probability", 0.94)))
+            out["departure_p"] = dp
+        exits = sorted(s["observed_at"] for s in exit_signals)
         moved = sorted(s["observed_at"] for s in strong_elsewhere if s["observed_at"] > settled)
-        if exits and dp >= auto:
+        if exits and not vehicle_only_exit and dp >= auto:
             # The departure is the first exit-like signal of the last burst (unpark, gate camera, fence).
             burst = [t for t in exits if t >= exits[-1] - timedelta(minutes=30)]
             out.update(state="CHECKED_OUT", out_at=burst[0], departure="correct_out" if reopen else "check_out")
@@ -263,6 +302,7 @@ def _signals_for(conn, booking) -> list[dict]:
     for r in rows:
         payload = json.loads(r["payload"] or "{}")
         out.append({"id": r["id"], "source": r["source"], "kind": r["kind"], "lot_id": r["lot_id"],
+                    "booking_id": r["booking_id"] or r["matched_booking_id"], "payload": payload,
                     "observed_at": db.parse(r["observed_at"]), "elsewhere": r["lot_id"] != booking["lot_id"],
                     "fuzzy": r["source"] == "camera_plate"
                     and db.normalize_plate(payload.get("plate_norm")) != booking["plate_norm"]})
@@ -351,7 +391,17 @@ def fuse_booking(conn, booking_id: str) -> dict | None:
         audit(conn, action="auto_check_in" if d["arrival"] == "check_in" else "arriving", entity="stay",
               entity_id=stay_id, lot_id=booking["lot_id"], before=before, after=stay_out(stay),
               observed_at=d["in_at"], actor_type="system")
-        _resolve_alerts(conn, now, booking_id=booking_id, alert_type="low_confidence")
+        suggestion = d.get("vehicle_suggestion")
+        if suggestion:
+            vehicle = suggestion.get("vehicle") or {}
+            description = " ".join(str(vehicle.get(field, "")) for field in ("color", "make", "body")).strip()
+            message = (f"Car-look suggests booking {booking_id} ({description}); verify with the driver or attendant. "
+                       f"Visual score {float(suggestion.get('score', 0)):.2f}, margin "
+                       f"{float(suggestion.get('top_margin', 0)):.2f}.")
+            _upsert_alert(conn, alert_type="low_confidence", severity="warning", lot_id=booking["lot_id"],
+                          stay_id=stay_id, booking_id=booking_id, at=now, message=message)
+        else:
+            _resolve_alerts(conn, now, booking_id=booking_id, alert_type="low_confidence")
         if before is None or before["state"] == "EXPECTED":
             resolve_gate(conn, booking["lot_id"], "enter", d["in_at"], booking_id, stay_id)
         if d["arrival"] == "check_in":
@@ -385,14 +435,22 @@ def fuse_booking(conn, booking_id: str) -> dict | None:
             and now - first_here >= _minutes(th, "attendant_after_min", 10)
             and not conn.execute("SELECT 1 FROM alerts WHERE type='low_confidence' AND booking_id=?",
                                  (booking_id,)).fetchone()):
+        suggestion = d.get("vehicle_suggestion")
+        if suggestion:
+            vehicle = suggestion.get("vehicle") or {}
+            appearance = " ".join(str(vehicle.get(field, "")) for field in ("color", "make", "body")).strip()
+            reason = f" Car-look suggests {booking_id} ({appearance}); verify manually."
+        else:
+            reason = ""
         _upsert_alert(conn, alert_type="low_confidence", severity="warning", lot_id=booking["lot_id"], stay_id=None,
                       booking_id=booking_id, at=now,
                       message=f"Weak evidence for {booking['plate_display'] or booking_id} "
-                              f"(P={d['arrival_p']:.2f}); attendant review needed.")
+                              f"(P={d['arrival_p']:.2f}); attendant review needed.{reason}")
     conn.commit()
     return {"booking_id": booking_id, "arrival_probability": d["arrival_p"],
             "departure_probability": d["departure_p"], "stay_id": stay["id"] if stay else None,
-            "state": stay["state"] if stay else None, "contradiction": d["contradiction"]}
+            "state": stay["state"] if stay else None, "contradiction": d["contradiction"],
+            "vehicle_suggestion": d.get("vehicle_suggestion")}
 
 
 def inferred_departure(conn, stay, now: datetime) -> datetime | None:

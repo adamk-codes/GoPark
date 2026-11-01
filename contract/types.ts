@@ -38,6 +38,10 @@ export interface Booking {
   status: BookingStatus;
   created_at?: ISOTime | null;
   plate?: string | null;
+  vehicle_color?: VehicleColor | null;
+  vehicle_body?: VehicleBody | null;
+  vehicle_make?: VehicleMake | null;
+  vehicle_model?: string | null;
 }
 
 export interface Stay {
@@ -94,6 +98,8 @@ export interface CameraVehicleCandidate {
 export interface CameraVehiclePayload {
   candidates: CameraVehicleCandidate[];
   top_margin: number;
+  expected_count?: number;
+  appearance_count?: number;
   model?: string;
 }
 
