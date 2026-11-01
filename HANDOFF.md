@@ -1,7 +1,18 @@
 # Handoff — current status
 
 > **Read this first** if you're a new Claude Code / Cursor session picking up the work.
-> Last updated: 2026-11-01. **Phase 1 is merged on `main`**. **Phase 2 is running** as 5 parallel worktree sessions on the owner's laptop: rhythm, ops simulator + fusion, mobile offline, dashboard evidence + evaluation, camera edge. Their branches are local `claude/feat-*-p2*` (see `git branch`), not pushed. When they finish: review, merge (order: ops → rhythm → edge → dashboard → mobile), run the checks in §6, push.
+> Last updated: 2026-11-01. **Phase 1 is merged on `main`**. **Phase 2:**
+> - Merged into **local** `main`: ops (fusion P2, simulator, WS /live, gate sensor), edge (plate reader, spot watcher), dashboard (real evidence, resolvable alerts, Evaluation tab), mobile (SQLite cache, outbox, offline QR check).
+> - **Not pushed:** the full `uv run pytest` gives 1 failure in `test_ops_simulator` and 25 setup errors (`no such column: OLD.estimated_fee`, an ordering issue between the schema trigger and the migration). The ops session is fixing this on `claude/feat-ops-p2-afe7a2`. Re-merge it, get the suite green, then push.
+> - Rhythm (`claude/feat-rhythm-p2-a66af2`: drift, calibrate, remind) is still finishing its evaluation, with uncommitted work in its worktree. Merge it when it reports.
+>
+> **Phase 3 assigned** (same sessions, own branches):
+> - ops: driver confirm + rewards API, plus the tuned fusion config;
+> - mobile: driver confirm/rewards screens and real geofence;
+> - dashboard: `tools/demo.py` one-command demo + `docs/DEMO.md`;
+> - edge: sensor-triggered plate reading, `edge/sensor_sim.py`, `edge/INTEGRATION.md`.
+>
+> **The gate-sensor hardware/firmware is owned by an external engineer working in Cursor.** They POST `gate_sensor` signals per CONTRACT §6. We don't write ESP32 code.
 > Repo: https://github.com/adamk-codes/GoPark · default branch `main`
 
 ## 1. What this project is (30 seconds)
