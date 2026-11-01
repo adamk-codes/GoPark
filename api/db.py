@@ -46,7 +46,8 @@ def normalize_plate(plate: str | None) -> str | None:
 # ---------- connection ----------
 def connect() -> sqlite3.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    # Requests, the alert scheduler and /live sockets share the file; wait for a writer instead of failing.
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
@@ -79,12 +80,16 @@ def set_clock(conn, demo_now: datetime) -> None:
 
 
 # ---------- seeding ----------
-def reset(conn, data_dir: Path = DATA_DIR) -> dict:
-    """Drop everything and reload lots + bookings from config/ and data/."""
+def reset(conn, data_dir: Path = DATA_DIR, prepark: bool = True) -> dict:
+    """Drop everything and reload lots + bookings from config/ and data/.
+
+    `prepark=False` skips the cars parked at 07:50 so a simulator replay starts from an empty lot.
+    """
     conn.executescript(";".join(f"DROP TABLE IF EXISTS {t}" for t in (
-        "points_ledger", "alerts", "processed_events", "audit_log", "fusion_evidence", "stays", "signals",
+        "changes", "gate_events", "points_ledger", "alerts", "processed_events", "audit_log", "fusion_evidence", "stays", "signals",
         "bookings", "vehicles", "users", "spaces", "lots", "meta")))
     conn.executescript((ROOT / "api" / "schema.sql").read_text(encoding="utf-8"))
+    _migrate(conn)
 
     lots_cfg = yaml.safe_load((ROOT / "config" / "lots.yaml").read_text(encoding="utf-8"))["lots"]
     rng = random.Random(7)
@@ -132,7 +137,7 @@ def reset(conn, data_dir: Path = DATA_DIR) -> dict:
     t0 = parse(DEFAULT_DEMO_NOW)
     set_clock(conn, t0)
     rows = conn.execute("SELECT * FROM bookings WHERE status = 'booked' AND start_at <= ? AND end_at > ?",
-                        (utc(t0), utc(t0))).fetchall()
+                        (utc(t0), utc(t0))).fetchall() if prepark else []
     for b in rows:
         method = rng.choice(["auto", "auto", "driver", "attendant"])
         in_at = parse(b["start_at"]) + timedelta(minutes=rng.randint(-8, 6))
@@ -144,8 +149,17 @@ def reset(conn, data_dir: Path = DATA_DIR) -> dict:
             "demo_now": now(conn).isoformat()}
 
 
+def _migrate(conn) -> None:
+    """Columns and indexes added after a table existed (CREATE TABLE IF NOT EXISTS won't add them)."""
+    signal_columns = {r["name"] for r in conn.execute("PRAGMA table_info(signals)")}
+    if "matched_booking_id" not in signal_columns:
+        conn.execute("ALTER TABLE signals ADD COLUMN matched_booking_id TEXT")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_signals_matched ON signals(matched_booking_id)")
+
+
 def ensure_seeded(conn) -> None:
     conn.executescript((ROOT / "api" / "schema.sql").read_text(encoding="utf-8"))
+    _migrate(conn)
     has = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='bookings'").fetchone()
     if has:
         booking_columns = {r["name"] for r in conn.execute("PRAGMA table_info(bookings)")}
