@@ -37,7 +37,17 @@
           "enableBackgroundPlayback": false
         }
       ],
-      "expo-sqlite"
+      "expo-sqlite",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Allow $(PRODUCT_NAME) to see when you reach your booked GoPark lot.",
+          "locationAlwaysAndWhenInUsePermission": "Allow $(PRODUCT_NAME) to check you in automatically when you arrive at and leave your booked GoPark lot, even when the app is closed.",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": false
+        }
+      ]
     ],
     "scheme": "gopark",
     "experiments": {
