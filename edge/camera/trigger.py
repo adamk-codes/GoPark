@@ -33,6 +33,7 @@ class GateEvent:
     gate_id: str | None = None
     lane: int | str | None = None
     client_event_id: str | None = None
+    observed_at: str | None = None
 
 
 @dataclass
@@ -58,7 +59,7 @@ def event_from_signal(sig: dict, t: float) -> GateEvent | None:
         return None
     p = sig.get("payload") or {}
     return GateEvent(t, sig["kind"], sig.get("lot_id", ""), p.get("gate_id"), p.get("lane"),
-                     sig.get("client_event_id"))
+                     sig.get("client_event_id"), sig.get("observed_at"))
 
 
 class GatePairer:

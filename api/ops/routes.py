@@ -168,6 +168,41 @@ def overview(lot_id: str, conn=Depends(get_conn)):
             "expected_soon": expected, "spaces": spaces}
 
 
+@router.get("/lots/{lot_id}/expected_vehicles")
+def expected_vehicles(lot_id: str, around: str | None = None, window_min: int = 20, conn=Depends(get_conn)):
+    """Appearance-only candidates for an unreadable gate plate; never enough to auto-confirm a stay."""
+    _lot(conn, lot_id)
+    window_min = max(1, min(window_min, 120))
+    try:
+        centre = db.parse(around) if around else db.now(conn)
+    except ValueError as exc:
+        raise HTTPException(422, "around must be an ISO 8601 timestamp") from exc
+    if centre.tzinfo is None:
+        raise HTTPException(422, "around must include a timezone offset")
+    lo, hi = db.utc(centre - timedelta(minutes=window_min)), db.utc(centre + timedelta(minutes=window_min))
+    rows = conn.execute(
+        "SELECT b.id, b.user_id, b.start_at, b.end_at, u.vehicle_color, u.vehicle_body, u.vehicle_make, u.vehicle_model "
+        "FROM bookings b JOIN users u ON u.id = b.user_id "
+        "WHERE b.lot_id = ? AND (b.status = 'booked' OR EXISTS "
+        f"(SELECT 1 FROM stays active WHERE active.booking_id = b.id AND active.state IN {ACTIVE})) "
+        "AND b.start_at <= ? AND b.end_at >= ? "
+        "AND u.vehicle_color IS NOT NULL AND u.vehicle_body IS NOT NULL AND u.vehicle_make IS NOT NULL "
+        "ORDER BY ABS(julianday(b.start_at) - julianday(?)), b.id",
+        (lot_id, hi, lo, db.utc(centre)),
+    ).fetchall()
+    prior_by_user: dict[str, float] = {}
+    day = centre.astimezone(db.TZ).date().isoformat()
+    for prior in latest_priors():
+        if (prior["lot_id"] == lot_id and prior["date"] == day
+                and db.parse(prior["window_start"]) <= centre <= db.parse(prior["window_end"])):
+            prior_by_user[prior["user_id"]] = float(prior["p"])
+    return [{"booking_id": row["id"], "user_id": row["user_id"],
+             "vehicle": {"color": row["vehicle_color"], "body": row["vehicle_body"],
+                         "make": row["vehicle_make"], "model": row["vehicle_model"]},
+             "p": prior_by_user.get(row["user_id"], float(FUSION_CONFIG.get("default_prior", 0.3)))}
+            for row in rows]
+
+
 # ---------- scan / check-in / check-out ----------
 class ScanIn(BaseModel):
     lot_id: str
@@ -425,7 +460,7 @@ class SignalIn(BaseModel):
     device_id: str
     lot_id: str
     source: Literal["geofence", "motion", "ble", "nfc", "gate_qr", "booking_qr", "camera_plate",
-                    "camera_spot", "gate_sensor", "car_bt", "attendant", "driver_confirm"]
+                    "camera_spot", "camera_vehicle", "gate_sensor", "car_bt", "attendant", "driver_confirm"]
     kind: Literal["enter", "exit", "park", "unpark", "scan", "occupied", "vacant", "confirm", "deny"]
     observed_at: str
     user_id: str | None = None
@@ -458,6 +493,48 @@ def signals(body: SignalIn | SignalBatch, conn=Depends(get_conn)):
                 payload["plate_norm"] = db.normalize_plate(str(payload["plate_norm"]))
             # Cameras don't know the booking: attribute by plate or watched space (CONTRACT.md §6).
             matched = fusion.attribute_camera(conn, s.lot_id, s.source, s.kind, observed, payload)
+        elif s.source == "camera_vehicle":
+            candidates = payload.get("candidates")
+            if not isinstance(candidates, list) or not candidates:
+                raise HTTPException(422, "camera_vehicle needs at least one candidate")
+            first = candidates[0]
+            if not isinstance(first, dict) or not isinstance(first.get("booking_id"), str):
+                raise HTTPException(422, "camera_vehicle candidate needs a booking_id")
+            expected = expected_vehicles(s.lot_id, around=s.observed_at, window_min=20, conn=conn)
+            eligible = {entry["booking_id"]: entry for entry in expected}
+            matched = first["booking_id"] if first["booking_id"] in eligible else None
+            if matched is None:
+                raise HTTPException(422, "camera_vehicle candidate is not expected at this lot and time")
+            # Candidate appearance labels are sourced from the server-side profile, not trusted from the camera.
+            safe_candidates = []
+            for candidate in candidates[:10]:
+                if not isinstance(candidate, dict) or candidate.get("booking_id") not in eligible:
+                    continue
+                try:
+                    score = float(candidate.get("score", 0))
+                except (TypeError, ValueError):
+                    raise HTTPException(422, "camera_vehicle candidate score must be numeric")
+                if not math.isfinite(score) or not 0 <= score <= 1:
+                    raise HTTPException(422, "camera_vehicle candidate score must be between 0 and 1")
+                safe_candidates.append({"booking_id": candidate["booking_id"], "score": score,
+                                        "vehicle": eligible[candidate["booking_id"]]["vehicle"]})
+            payload["candidates"] = safe_candidates
+            if not payload["candidates"] or payload["candidates"][0]["booking_id"] != matched:
+                raise HTTPException(422, "camera_vehicle candidates must be sorted with the selected booking first")
+            try:
+                margin = float(payload.get("top_margin", 0))
+            except (TypeError, ValueError):
+                raise HTTPException(422, "camera_vehicle top_margin must be numeric")
+            if not math.isfinite(margin) or not 0 <= margin <= 1:
+                raise HTTPException(422, "camera_vehicle top_margin must be between 0 and 1")
+            payload["top_margin"] = margin
+            top_vehicle = eligible[matched]["vehicle"]
+            payload["expected_count"] = len(eligible)
+            payload["appearance_count"] = sum(
+                1 for entry in eligible.values()
+                if entry["vehicle"]["color"] == top_vehicle["color"]
+                and entry["vehicle"]["body"] == top_vehicle["body"]
+            )
         cur = conn.execute(
             "INSERT OR IGNORE INTO signals(client_event_id, device_id, user_id, lot_id, booking_id, source, kind,"
             " observed_at, received_at, payload, matched_booking_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)",

@@ -35,6 +35,7 @@
         "booking_qr",
         "camera_plate",
         "camera_spot",
+        "camera_vehicle",
         "gate_sensor",
         "car_bt",
         "attendant",

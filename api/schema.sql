@@ -22,7 +22,11 @@ CREATE TABLE IF NOT EXISTS spaces (
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
   reliability_score REAL NOT NULL DEFAULT 0.5,
-  tier TEXT NOT NULL DEFAULT 'standard'
+  tier TEXT NOT NULL DEFAULT 'standard',
+  vehicle_color TEXT,
+  vehicle_body TEXT,
+  vehicle_make TEXT,
+  vehicle_model TEXT
 );
 
 CREATE TABLE IF NOT EXISTS vehicles (

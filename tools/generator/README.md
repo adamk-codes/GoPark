@@ -19,6 +19,9 @@ uv run python -m tools.generator --users 300 --weeks 26 --seed 42
 
 Output in `--out` (default `data/`): `bookings.csv`, `stays.csv`, `truth.json`, `traces/`, and `messy_log.json` with `--messy`.
 `truth.json → generated_with` records the mix, persona counts, capacity shifts/drops, messy counts and trace scenario counts.
+Each user also has one generated vehicle profile (`vehicle: {color, body, make, model}` in `truth.json`), repeated
+as optional `vehicle_*` columns on their booking rows for the ops DB seed. Color/make proportions are hand-set
+synthetic demo weights (white, silver, black and common makes are more frequent), not measured Lebanon fleet data.
 
 ## Personas
 

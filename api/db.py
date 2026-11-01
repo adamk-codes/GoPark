@@ -109,12 +109,14 @@ def reset(conn, data_dir: Path = DATA_DIR, prepark: bool = True) -> dict:
         spaces_by_lot.setdefault(row["lot_id"], []).append(row["id"])
     space_free_at: dict[str, str] = {}
 
-    users, vehicles, bookings = set(), set(), []
+    users: dict[str, tuple[str | None, str | None, str | None, str | None]] = {}
+    vehicles, bookings = set(), []
     seeded_at = utc(parse(DEFAULT_DEMO_NOW))
     with open(data_dir / "bookings.csv", newline="", encoding="utf-8") as f:
         for r in csv.DictReader(f):
             plate_norm = normalize_plate(r.get("plate"))
-            users.add(r["user_id"])
+            users.setdefault(r["user_id"], (r.get("vehicle_color") or None, r.get("vehicle_body") or None,
+                                              r.get("vehicle_make") or None, r.get("vehicle_model") or None))
             if plate_norm:
                 vehicles.add((r["user_id"], plate_norm, r["plate"]))
             start, end = utc(parse(r["start_time"])), utc(parse(r["end_time"]))
@@ -129,7 +131,8 @@ def reset(conn, data_dir: Path = DATA_DIR, prepark: bool = True) -> dict:
                              start, end, r["status"], utc(parse(r["created_at"])) if r.get("created_at") else None,
                              seeded_at))
 
-    conn.executemany("INSERT INTO users(id) VALUES (?)", [(u,) for u in sorted(users)])
+    conn.executemany("INSERT INTO users(id, vehicle_color, vehicle_body, vehicle_make, vehicle_model) "
+                     "VALUES (?,?,?,?,?)", [(u, *users[u]) for u in sorted(users)])
     conn.executemany("INSERT INTO vehicles(user_id, plate_norm, plate_display) VALUES (?,?,?)", sorted(vehicles))
     conn.executemany("INSERT INTO bookings VALUES (?,?,?,?,?,?,?,?,?,?,?)", bookings)
 
@@ -160,6 +163,8 @@ def _migrate(conn) -> None:
     and CREATE TABLE IF NOT EXISTS never adds them), and again after it for fresh tables.
     """
     added = {"bookings": [("updated_at", "TEXT NOT NULL DEFAULT ''")],
+             "users": [("vehicle_color", "TEXT"), ("vehicle_body", "TEXT"),
+                       ("vehicle_make", "TEXT"), ("vehicle_model", "TEXT")],
              "alerts": [("updated_at", "TEXT NOT NULL DEFAULT ''"), ("estimated_fee", "REAL"),
                         ("resolved_by", "TEXT"), ("resolved_at", "TEXT")],
              "signals": [("matched_booking_id", "TEXT")]}

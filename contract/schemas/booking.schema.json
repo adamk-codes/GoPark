@@ -40,6 +40,18 @@
         "string",
         "null"
       ]
+    },
+    "vehicle_color": {
+      "enum": ["white", "silver", "black", "grey", "blue", "red", "green", "beige", null]
+    },
+    "vehicle_body": {
+      "enum": ["sedan", "hatchback", "suv", "pickup", "van", null]
+    },
+    "vehicle_make": {
+      "enum": ["Kia", "Toyota", "Hyundai", "Nissan", "Mercedes", "BMW", null]
+    },
+    "vehicle_model": {
+      "type": ["string", "null"]
     }
   },
   "required": [

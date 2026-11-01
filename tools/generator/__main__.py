@@ -21,6 +21,7 @@ import yaml
 from tools.generator import messy
 from tools.generator.personas import PERSONAS, TZ, Calendar
 from tools.generator.traces import write_traces
+from tools.generator.vehicle import make_vehicle_profile
 
 ROOT = Path(__file__).resolve().parents[2]
 PLATE_LETTERS = "BGMNOSTZ"
@@ -134,7 +135,10 @@ def main() -> None:
         persona = rng.choices(names, weights=[mix[n] for n in names])[0]
         plan = registry[persona][0](rng, cal, lots)
         plate = f"{rng.choice(PLATE_LETTERS)} {rng.randint(1, 999999)}"
-        truth[user_id] = {"persona": persona, "routines": plan.routines, "plate": plate, **plan.extra}
+        # Isolate vehicle-profile draws so adding T1 attributes does not alter existing seeded bookings/traces.
+        vehicle = make_vehicle_profile(random.Random(args.seed * 1_000_003 + i))
+        truth[user_id] = {"persona": persona, "routines": plan.routines, "plate": plate,
+                  "vehicle": vehicle, **plan.extra}
         for b in plan.bookings:
             if b.start.date() >= history_cutoff:
                 if b.status == "cancelled":
@@ -149,7 +153,8 @@ def main() -> None:
                           else "completed")
             rows.append({"user_id": user_id, "location_id": b.location_id, "start": b.start,
                          "end": b.end, "status": status,
-                         "created_at": b.start - timedelta(hours=b.lead_hours), "plate": plate})
+                         "created_at": b.start - timedelta(hours=b.lead_hours), "plate": plate,
+                         "vehicle": vehicle})
 
     capacity = enforce_capacity(rows, lots)
     rows.sort(key=lambda r: (r["start"], r["user_id"]))
@@ -157,7 +162,9 @@ def main() -> None:
     for n, r in enumerate(rows, 1):
         bid = f"B{n:06d}"
         out_rows.append([bid, r["user_id"], r["location_id"], r["start"].isoformat(), r["end"].isoformat(),
-                         r["status"], r["created_at"].isoformat(timespec="seconds"), r["plate"]])
+                         r["status"], r["created_at"].isoformat(timespec="seconds"), r["plate"],
+                         r["vehicle"]["color"], r["vehicle"]["body"], r["vehicle"]["make"],
+                         r["vehicle"]["model"] or ""])
         if r["status"] == "completed":
             arrive = r["start"] + timedelta(minutes=rng.gauss(-5, 8))
             overstay = rng.random() < 0.08
@@ -174,7 +181,7 @@ def main() -> None:
     with open(args.out / "bookings.csv", "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(["booking_id", "user_id", "location_id", "start_time", "end_time",
-                    "status", "created_at", "plate"])
+                    "status", "created_at", "plate", "vehicle_color", "vehicle_body", "vehicle_make", "vehicle_model"])
         w.writerows(out_rows)
 
     with open(args.out / "stays.csv", "w", newline="", encoding="utf-8") as f:

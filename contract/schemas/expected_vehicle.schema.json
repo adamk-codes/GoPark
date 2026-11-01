@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "expected_vehicle",
+  "type": "object",
+  "properties": {
+    "booking_id": { "type": "string" },
+    "user_id": { "type": "string" },
+    "vehicle": {
+      "type": "object",
+      "properties": {
+        "color": { "enum": ["white", "silver", "black", "grey", "blue", "red", "green", "beige"] },
+        "body": { "enum": ["sedan", "hatchback", "suv", "pickup", "van"] },
+        "make": { "enum": ["Kia", "Toyota", "Hyundai", "Nissan", "Mercedes", "BMW"] },
+        "model": { "type": ["string", "null"] }
+      },
+      "required": ["color", "body", "make"],
+      "additionalProperties": false
+    },
+    "p": { "type": "number", "minimum": 0, "maximum": 1 }
+  },
+  "required": ["booking_id", "user_id", "vehicle", "p"],
+  "additionalProperties": false
+}
