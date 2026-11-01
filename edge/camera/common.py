@@ -1,6 +1,6 @@
 """Shared pieces of the camera edge: plate normalisation, debouncing, clock, frame sources, signal output.
 
-Everything here is light (stdlib + numpy/cv2 + requests) so the tests can import it without the models.
+Everything here is light (stdlib; cv2 only inside `frames`) so the tests and sensor_sim run without the edge group.
 Frames are processed in memory only; nothing in this package writes images to disk.
 """
 from __future__ import annotations
@@ -18,6 +18,20 @@ from typing import Iterator
 
 ROOT = Path(__file__).resolve().parents[2]
 SIGNAL_SCHEMA = ROOT / "contract" / "schemas" / "signal.schema.json"
+
+# ---------- http (stdlib, so the default install is enough) ----------
+def http_json(method: str, url: str, body=None, params: dict | None = None, timeout: float = 5.0):
+    """JSON request; returns the decoded body. Raises urllib.error.HTTPError (has `.code`) on 4xx/5xx."""
+    import urllib.parse
+    import urllib.request
+    if params:
+        url += "?" + urllib.parse.urlencode({k: v for k, v in params.items() if v is not None})
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method, headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        raw = r.read()
+    return json.loads(raw) if raw else None
+
 
 # ---------- plate normalisation ----------
 # Arabic-Indic (U+0660..) and Eastern Arabic-Indic / Persian (U+06F0..) digits -> 0-9.
@@ -108,11 +122,9 @@ class Clock:
         return self.now().isoformat(timespec="seconds")
 
     def _sync(self) -> None:
-        import requests
         try:
-            r = requests.get(f"{self.api}/dev/clock", timeout=3)
-            r.raise_for_status()
-            self._base, self._at = datetime.fromisoformat(r.json()["now"]), time.monotonic()
+            now = http_json("GET", f"{self.api}/dev/clock", timeout=3)["now"]
+            self._base, self._at = datetime.fromisoformat(now), time.monotonic()
         except Exception as e:  # keep the old offset if we had one, else fall back to real time
             if self._base is None:
                 print(f"[clock] cannot read {self.api}/dev/clock ({e}); using local time", file=sys.stderr)
@@ -161,13 +173,11 @@ class SignalSink:
     def flush(self) -> None:
         if self.dry_run or not self.outbox:
             return
-        import requests
         batch = list(self.outbox)
         try:
-            r = requests.post(f"{self.api}/signals", json={"signals": batch}, timeout=5)
-            r.raise_for_status()
+            res = http_json("POST", f"{self.api}/signals", {"signals": batch})
             self.outbox.clear()
-            print(f"[post] {len(batch)} signal(s) -> {r.json()}", file=sys.stderr, flush=True)
+            print(f"[post] {len(batch)} signal(s) -> {res}", file=sys.stderr, flush=True)
         except Exception as e:
             print(f"[post] failed, {len(batch)} queued: {e}", file=sys.stderr, flush=True)
 
@@ -180,12 +190,20 @@ def is_live(source: str) -> bool:
     return source.isdigit() or source.split(":", 1)[0].lower() in ("http", "https", "rtsp", "rtmp")
 
 
-def frames(source: str, every: int = 1, max_fps: float | None = None) -> Iterator[tuple[float, "object"]]:
+def frames(source: str, every: int = 1, max_fps: float | None = None,
+           realtime: bool = False) -> Iterator[tuple[float, "object"]]:
     """Yield `(t_seconds, BGR frame)` from a webcam index, stream URL, video file or image folder.
 
     Video files and folders use media time (frame index / fps) so debouncing behaves like live;
-    live streams use wall time and always hand out the newest frame (stale buffered frames are dropped).
+    `realtime` also waits so they play at that speed (the sensor trigger works in wall time).
+    Live streams use wall time and always hand out the newest frame (stale buffered frames are dropped).
     """
+    if realtime and not is_live(source):
+        t0 = time.monotonic()
+        for t, img in frames(source, every, max_fps):
+            time.sleep(max(0.0, t - (time.monotonic() - t0)))
+            yield t, img
+        return
     import cv2
     p = Path(source)
     if p.is_dir():

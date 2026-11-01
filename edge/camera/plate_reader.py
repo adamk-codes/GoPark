@@ -12,8 +12,11 @@ Pipeline per frame (all in memory; no image is ever written to disk):
      plate or is unsure (needed for Arabic-Indic digits); `easyocr` = EasyOCR only;
   4. normalise (uppercase, Arabic-Indic -> 0-9, strip spaces/dashes, positional O/0 B/8 fixes) and keep
      only `^[A-Z]\\d{1,6}$`;
-  5. debounce: a plate is sent once it is read in >= 2 of the last 5 processed frames, then not again for
-     --cooldown seconds.
+  5. always-on (default): a plate is sent once it is read in >= 2 of the last 5 processed frames, then not
+     again for --cooldown seconds.
+     --trigger listen|api: frames are still read all the time, but a plate is sent only for a gate_sensor
+     event: the best read within +-8 s of it, with the event's direction (--kind auto) and gate_id/lane.
+     See edge/camera/trigger.py and edge/INTEGRATION.md.
 """
 from __future__ import annotations
 
@@ -29,6 +32,7 @@ from pathlib import Path
 import numpy as np
 
 from edge.camera.common import Clock, PlateDebouncer, SignalSink, Timer, frames, make_signal, plate_from_ocr
+from edge.camera.trigger import PlateHit
 
 MODELS = Path(__file__).resolve().parents[1] / "models"
 VEHICLE_CLASSES = [2, 3, 5, 7]  # COCO: car, motorcycle, bus, truck
@@ -152,7 +156,8 @@ def main(argv: list[str] | None = None) -> dict:
     ap.add_argument("--source", required=True, help="stream URL, webcam index, video file, image or folder")
     ap.add_argument("--lot-id", required=True)
     ap.add_argument("--device-id", default="cam-entrance-1")
-    ap.add_argument("--kind", choices=["enter", "exit"], default="enter", help="enter: entrance cam, exit: exit cam")
+    ap.add_argument("--kind", choices=["enter", "exit", "auto"], default="enter",
+                    help="enter: entrance cam, exit: exit cam, auto: direction from the gate sensor (needs --trigger)")
     ap.add_argument("--api", default="http://localhost:8005")
     ap.add_argument("--clock", choices=["demo", "field"], default="demo",
                     help="demo: observed_at from GET /dev/clock; field: real local time")
@@ -163,13 +168,23 @@ def main(argv: list[str] | None = None) -> dict:
     ap.add_argument("--car-weights", default="yolo11n.pt")
     ap.add_argument("--roi", help="x,y,w,h crop of the lane, in pixels")
     ap.add_argument("--window", type=int, default=5)
-    ap.add_argument("--need", type=int, default=2)
+    ap.add_argument("--need", type=int, default=2, help="frames a plate must be read in before it is sent")
     ap.add_argument("--cooldown", type=float, default=120.0, help="seconds before the same plate is sent again")
+    ap.add_argument("--trigger", choices=["none", "listen", "api"], default="none",
+                    help="none: always on (default); listen/api: post only the best read around gate_sensor events")
+    ap.add_argument("--listen", default="0.0.0.0:8090", help="--trigger listen: host:port for POST /gate")
+    ap.add_argument("--window-s", type=float, default=8.0, help="--trigger: +- seconds around a gate event")
+    ap.add_argument("--gate-id", help="--trigger: only events from this gate_id")
+    ap.add_argument("--lane", help="--trigger: only events from this lane")
     ap.add_argument("--fps", type=float, default=4.0, help="max frames/s to process (live) or folder fps")
     ap.add_argument("--every", type=int, default=1, help="video files: use every Nth frame")
+    ap.add_argument("--realtime", action="store_true", help="files: play at recorded speed (for --trigger tests)")
+    ap.add_argument("--loop", action="store_true", help="files: start again at the end (until Ctrl+C)")
     ap.add_argument("--max-frames", type=int, default=0)
     ap.add_argument("--verbose", action="store_true", help="print every per-frame read to stderr")
     a = ap.parse_args(argv)
+    if a.kind == "auto" and a.trigger == "none":
+        ap.error("--kind auto needs --trigger listen or --trigger api (the direction comes from the gate sensor)")
 
     roi = tuple(int(v) for v in a.roi.split(",")) if a.roi else None
     t0 = time.perf_counter()
@@ -180,31 +195,72 @@ def main(argv: list[str] | None = None) -> dict:
     deb = PlateDebouncer(a.window, a.need, a.cooldown)
     timer = Timer()
     best: dict[str, float] = {}
+    pairer = events = None
+    if a.trigger != "none":
+        from edge.camera.trigger import ApiPollSource, GatePairer, ListenSource
+        pairer = GatePairer(a.lot_id, a.window_s, a.need, a.kind, a.gate_id, a.lane)
+        if a.trigger == "listen":
+            host, port = a.listen.rsplit(":", 1)
+            events = ListenSource(host, int(port))
+        else:
+            events = ApiPollSource(a.api, a.lot_id)
+    stats = {"ocr": a.ocr, "cars": a.cars, "trigger": a.trigger, "gate_events": 0, "unpaired_events": 0}
+
+    def send_pairings(done):
+        for pr in done:
+            stats["gate_events"] += 1
+            if pr.plate is None:
+                stats["unpaired_events"] += 1
+                print(f"[trigger] {pr.event.kind} at {pr.event.gate_id}: no plate read >= {a.need}x "
+                      f"within +-{a.window_s:g}s {pr.candidates}", file=sys.stderr)
+                continue
+            payload = {"plate_norm": pr.plate, "ocr_conf": round(pr.conf, 2), "reads": pr.reads}
+            for k, v in (("gate_id", pr.event.gate_id), ("lane", pr.event.lane)):
+                if v is not None:
+                    payload[k] = v
+            sink.send(make_signal(device_id=a.device_id, lot_id=a.lot_id, source="camera_plate",
+                                  kind=pr.event.kind, observed_at=pr.observed_at, payload=payload))
+
     n = 0
     try:
-        for t, img in frames(a.source, a.every, a.fps):
-            start = time.perf_counter()
-            reads = reader.read_frame(img)
-            timer.add(time.perf_counter() - start)
-            if a.verbose:
-                print(f"[frame {n} t={t:.1f}] " + ", ".join(f"{r.raw!r}->{r.plate} {r.conf:.2f} {r.engine}"
-                                                            for r in reads), file=sys.stderr)
-            plates = {r.plate for r in reads if r.plate}
-            for r in reads:
-                if r.plate:
-                    best[r.plate] = max(best.get(r.plate, 0.0), r.conf)
-            for p in deb.push(plates, t):
-                sink.send(make_signal(device_id=a.device_id, lot_id=a.lot_id, source="camera_plate", kind=a.kind,
-                                      observed_at=clock.iso(),
-                                      payload={"plate_norm": p, "ocr_conf": round(best.get(p, 0.0), 2)}))
-            n += 1
-            if a.max_frames and n >= a.max_frames:
+        while True:
+            for t, img in frames(a.source, a.every, a.fps, realtime=a.realtime):
+                start = time.perf_counter()
+                reads = reader.read_frame(img)
+                timer.add(time.perf_counter() - start)
+                if a.verbose:
+                    print(f"[frame {n} t={t:.1f}] " + ", ".join(f"{r.raw!r}->{r.plate} {r.conf:.2f} {r.engine}"
+                                                                for r in reads), file=sys.stderr)
+                if pairer is not None:
+                    now, at = time.monotonic(), clock.iso()
+                    pairer.add_hits([PlateHit(now, r.plate, r.conf, at) for r in reads if r.plate])
+                    for ev in events.poll():
+                        pairer.add_event(ev)
+                    send_pairings(pairer.due(now))
+                else:
+                    plates = {r.plate for r in reads if r.plate}
+                    for r in reads:
+                        if r.plate:
+                            best[r.plate] = max(best.get(r.plate, 0.0), r.conf)
+                    for p in deb.push(plates, t):
+                        sink.send(make_signal(device_id=a.device_id, lot_id=a.lot_id, source="camera_plate",
+                                              kind=a.kind, observed_at=clock.iso(),
+                                              payload={"plate_norm": p, "ocr_conf": round(best.get(p, 0.0), 2)}))
+                n += 1
+                if a.max_frames and n >= a.max_frames:
+                    raise KeyboardInterrupt
+            if not a.loop:
                 break
     except KeyboardInterrupt:
         pass
+    if pairer is not None:
+        for ev in events.poll():
+            pairer.add_event(ev)
+        send_pairings(pairer.due(time.monotonic(), flush=True))
+        events.close()
     sink.flush()
-    stats = {"ocr": a.ocr, "cars": a.cars, "signals": len(sink.sent),
-             "plates": [s["payload"]["plate_norm"] for s in sink.sent], "per_frame": timer.summary()}
+    stats.update({"signals": len(sink.sent), "plates": [s["payload"]["plate_norm"] for s in sink.sent],
+                  "per_frame": timer.summary()})
     print(json.dumps(stats), file=sys.stderr)
     return stats
 
