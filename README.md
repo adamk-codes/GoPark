@@ -2,6 +2,36 @@
 
 GoPark × AUB hackathon. The focus is **Challenge 1: automatic arrival and departure detection, plus an attendant app**. Challenge 2 ("Rhythm", the booking-pattern engine) supports it by predicting who is about to arrive.
 
+## ML at a glance
+
+| Component | What it does | Methods | Code |
+|---|---|---|---|
+| **Plate reader** | Reads Lebanese plates at the gate, Latin and Arabic-Indic digits | YOLOv9-t plate detector (ONNX) + fast-plate-ocr, with EasyOCR for Arabic-Indic digits; optional YOLO11n vehicle boxes to cut false reads; multi-frame voting on OCR confidence | [`edge/camera/plate_reader.py`](edge/camera/plate_reader.py) |
+| **Car-look match** | Suggests which expected booking a car is when the plate is unreadable | CLIP zero-shot colour/body classification, ranked against expected bookings, with a safety cap | [`edge/camera/vehicle_matcher.py`](edge/camera/vehicle_matcher.py) |
+| **Spot watcher** | Detects when a single spot becomes occupied or free | YOLO11n box coverage of each spot polygon | [`edge/camera/spot_watcher.py`](edge/camera/spot_watcher.py) |
+| **Rhythm** | Learns each driver's routine and predicts the next booking | Routine discovery, Bayesian habit test, CUSUM drift detection, isotonic calibration; backtested against 3 baselines with ablations | [`rhythm/`](rhythm/) |
+| **Evidence fusion** | Decides check-in/out from camera, sensor, GPS and Rhythm signals, with explainable evidence | Weighted evidence fusion with confidence thresholds, tuned by replaying simulated traces | [`api/ops/`](api/ops/) |
+
+**Results** (synthetic data; real-world accuracy not yet measured, see [Limitations](HANDOFF.md#5-limitations)):
+
+| Measure | Result |
+|---|---|
+| Rhythm, next-booking Hit@1 on test weeks | **0.718** vs 0.684 for the best baseline |
+| Rhythm, weekly day-set recovery (Jaccard) | **0.976** vs 0.874 |
+| Detection, 674 simulated bookings replayed through the API | 93% confirmed automatically, 97% with driver confirmation, 0 false confirmations |
+| Plate OCR, Western-digit plates (clean, blur, angle, dark, noise) | 5/5 crops, 5/5 whole frames; ~100 ms/frame on CPU |
+| Plate OCR, Arabic-Indic crops (EasyOCR) | 19/30 (63%), preliminary |
+
+**Reproduce:**
+
+```bash
+uv sync && uv run pytest                                          # 90+ tests
+uv run python -m rhythm evaluate                                  # backtest vs baselines → runs/<run_id>/metrics.json
+uv sync --group edge && uv run --group edge python -m edge.tests.eval_ocr --ocr fast auto easyocr
+```
+
+**Authors:** Adam Al Khatib (system design, plate reader and gate pipeline, Rhythm, evidence fusion, simulator, docs) with a teammate who built the car-look (CLIP) match.
+
 Read these first:
 - [ARCHITECTURE_PLAN.md](ARCHITECTURE_PLAN.md) — what we're building and why.
 - [CONTRACT.md](CONTRACT.md) — the shared data formats and API every part codes against.
